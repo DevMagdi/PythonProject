@@ -1,0 +1,7 @@
+pandas
+sqlalchemy
+pyodbc
+openpyxl
+python-dotenv
+Pillow
+bidi

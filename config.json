@@ -1,0 +1,14 @@
+{
+    "database": {
+        "server": "DESKTOP-A0QINRF\\MSSQLSERVERTEST",
+        "db_name": "FIBTest",
+        "user": "fgs",
+        "password": "123456"
+    },
+    "app_settings": {
+        "root_folder": ""
+    },
+    "license_info": {
+        "key": "0E8FF41E6C27C86A-MjAyNy0wNC0wNw==-TUlHTw=="
+    }
+}
