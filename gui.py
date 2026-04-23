@@ -355,7 +355,7 @@ class FGSApp(customtkinter.CTk):
         #self.btn_conf = self.create_nav_btn("⚙️  Configuration", 3, "config")
         self.btn_nuwairy = self.create_nav_btn("✨  Account Inquiry", 4, "nuwairy")
         self.btn_gl_inquiry = self.create_nav_btn("✨  GL Account Inquiry", 5, "gl_inquiry")
-        self.btn_customer = self.create_nav_btn("✨  Customer Inquiry", 6, "customer")
+        #self.btn_customer = self.create_nav_btn("✨  Customer Inquiry", 6, "customer")
         # ==========================================
         # 🆔 ACTIVATION & LICENSE CARD (شكل مبسط وآمن للموظفين)
         # ==========================================
@@ -3534,7 +3534,7 @@ class FGSApp(customtkinter.CTk):
                     cleaned_cnm = add_df["cnm"].astype(str).str.strip()
                     self.add_code_to_name = dict(zip(cleaned_ccod, cleaned_cnm))
 
-                    #print(f"🔴 DEBUG 1: تم تحميل عدد {len(self.add_code_to_name)} كود من جدول TBL_add_codes")
+                    print(f"🔴 DEBUG 1: تم تحميل عدد {len(self.add_code_to_name)} كود من جدول TBL_add_codes")
                 except Exception as e:
                     if hasattr(self, 'sys_logger'):
                         self.sys_logger.log(f"⚠️ فشل جلب جدول TBL_add_codes: {e}", "WARNING")
@@ -3660,9 +3660,12 @@ class FGSApp(customtkinter.CTk):
 
                 # 🆕 استخراج ncod2 والبحث عن اسمه في القاموس
                 ncod2_val = str(getattr(r, "ncod2", "")).strip()
+
+                #print(ncod2_val)
+
                 # 🛡️ الحماية الثانية الأهم: ضفنا str() هنا عشان ميديناش خطأ الـ float
                 doc_name = str(add_map.get(ncod2_val, "")).strip()
-
+                #print(doc_name)
                 amt = float(getattr(r, "namt", 0.0))
                 amt_abs = abs(amt)
 
