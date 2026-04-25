@@ -3460,7 +3460,7 @@ class FGSApp(customtkinter.CTk):
                     self.lbl_branch_info.configure(text="⛔ تم حجب بيانات العميل للحماية.")
 
                 if hasattr(self, "sheet"):
-                    self.sheet.set_sheet_data([], reset_col_positions=False, reset_row_positions=True)
+                     self.sheet.set_sheet_data([], reset_col_positions=False, reset_row_positions=True)
                 return
             # ==========================================
             # ✅ نهاية البوابة الأمنية - اللوجيك القديم بيكمل من هنا
