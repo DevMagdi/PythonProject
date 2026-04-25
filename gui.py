@@ -285,7 +285,11 @@ class FGSApp(customtkinter.CTk):
             self.sys_logger.log(f"⚠️ تنبيه: لم يتم تحميل ملف الإعدادات عند البداية: {e}", "WARNING")
 
         # Grid Layout
-        self.grid_columnconfigure(1, weight=1)
+        # --- التعديل الجديد (RTL) ---
+        # بنخلي العمود رقم 0 (اللي على الشمال) هو اللي يتمدد عشان يشيل الشاشات
+        self.grid_columnconfigure(0, weight=1)
+        # بنخلي العمود رقم 1 (اللي على اليمين) مساحته ثابتة للسايد بار
+        self.grid_columnconfigure(1, weight=0)
         self.grid_rowconfigure(0, weight=1)
 
         # 2. Setup UI
@@ -327,12 +331,13 @@ class FGSApp(customtkinter.CTk):
 
     def setup_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0, fg_color=COLOR_WHITE)
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid(row=0, column=1, sticky="nsew")
 
-        # حجز مساحة مرنة قبل كارت التفعيل لدفعه للأسفل
+        # تعديل مهم: حجزنا مساحة للـ menu عشان تتمدد (row 2)، ومساحة لدفع الكارت لتحت (row 10)
+        self.sidebar.grid_rowconfigure(2, weight=1)
         self.sidebar.grid_rowconfigure(10, weight=1)
 
-        # 1. Logo Area
+        # 1. Logo Area (بدون أي تعديل)
         logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         logo_frame.grid(row=0, column=0, pady=(30, 20), padx=20, sticky="ew")
 
@@ -344,20 +349,37 @@ class FGSApp(customtkinter.CTk):
                 size=(180, 50)
             )
             ctk.CTkLabel(logo_frame, text="", image=self.logo_image).pack()
-        except Exception:  # تعديل: منع الـ Bare Exception
+        except Exception:
             ctk.CTkLabel(logo_frame, text="FIB SYSTEM", font=("Arial", 20, "bold"), text_color=FIB_GREEN).pack()
 
         ctk.CTkFrame(self.sidebar, height=2, fg_color=FIB_GOLD).grid(row=1, column=0, sticky="ew", padx=30,
                                                                      pady=(0, 20))
 
-        # 2. Menu Buttons
-        #self.btn_dash = self.create_nav_btn("📊  Dashboard", 2, "dashboard")
-        #self.btn_conf = self.create_nav_btn("⚙️  Configuration", 3, "config")
-        self.btn_nuwairy = self.create_nav_btn("✨  Account Inquiry", 4, "nuwairy")
-        self.btn_gl_inquiry = self.create_nav_btn("✨  GL Account Inquiry", 5, "gl_inquiry")
-        #self.btn_customer = self.create_nav_btn("✨  Customer Inquiry", 6, "customer")
         # ==========================================
-        # 🆔 ACTIVATION & LICENSE CARD (شكل مبسط وآمن للموظفين)
+        # 2. Menu Buttons (المنطقة الجديدة للقوائم المنسدلة)
+        # ==========================================
+        self.menu_container = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
+        self.menu_container.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+
+        self.sub_menus = {}  # قاموس لحفظ القوائم والزراير عشان الإخفاء والإظهار
+
+        # 📂 تقدر تضيف هنا كل الشاشات اللي عايزها وهتترسم لوحدها!
+        menu_structure = {
+
+            "📂 الحسابات العامة": [
+                ("استعلام الحسابات", "nuwairy"),
+                ("أستاذ الحسابات العام", "gl_inquiry"),
+            ],
+            "👥 شؤون العملاء": [
+                ("بحث عن عميل", "customer"),
+            ]
+        }
+
+        for category, items in menu_structure.items():
+            self.create_collapsible_menu(category, items)
+
+        # ==========================================
+        # 🆔 ACTIVATION & LICENSE CARD (بدون أي تعديل)
         # ==========================================
         status_color = FIB_GREEN if self.lic_data.get("active") else COLOR_RED_ALERT
         status_text = "ACTIVE LICENSE" if self.lic_data.get("active") else "INACTIVE / DEMO"
@@ -366,9 +388,8 @@ class FGSApp(customtkinter.CTk):
                                  border_color="#E0E0E0")
         info_card.grid(row=11, column=0, padx=15, pady=20, sticky="ew")
 
-        # -- Status Header (فقط الحالة هتظهر للموظف) --
         status_row = ctk.CTkFrame(info_card, fg_color="transparent")
-        status_row.pack(fill="x", padx=10, pady=15)  # كبرت المسافة شوية عشان مفيش حاجة تحتها
+        status_row.pack(fill="x", padx=10, pady=15)
 
         self.lbl_dot = ctk.CTkLabel(status_row, text="●", font=("Arial", 16), text_color=status_color)
         self.lbl_dot.pack(side="left")
@@ -376,18 +397,67 @@ class FGSApp(customtkinter.CTk):
                                             text_color=status_color)
         self.lbl_status_text.pack(side="left", padx=5)
 
-        # 🌟 الباب الخلفي السري للأدمن: دبل كليك بالماوس على الكارت يفتح شاشة التفعيل
         info_card.bind("<Double-1>", lambda e: self.show_admin_activation_popup())
         status_row.bind("<Double-1>", lambda e: self.show_admin_activation_popup())
         self.lbl_status_text.bind("<Double-1>", lambda e: self.show_admin_activation_popup())
         self.lbl_dot.bind("<Double-1>", lambda e: self.show_admin_activation_popup())
 
-        # Footer
+        # Footer (بدون أي تعديل)
         ctk.CTkLabel(self.sidebar, text="v2.1 Enterprise © FGS", font=("Arial", 9), text_color="#CCC").grid(
-            row=12,
-            column=0,
-            pady=(0, 10)
+            row=12, column=0, pady=(0, 10)
         )
+
+    def create_collapsible_menu(self, category_text, items):
+        # حاوية رئيسية لكل قسم
+        category_container = ctk.CTkFrame(self.menu_container, fg_color="transparent")
+        category_container.pack(fill="x", pady=3)
+
+        # الفريم اللي جواه الشاشات الفرعية (هيكون مخفي في الأول)
+        sub_frame = ctk.CTkFrame(category_container, fg_color="transparent")
+        self.sub_menus[category_text] = sub_frame
+
+        # الزرار الرئيسي (زي "الحسابات العامة")
+        main_btn = ctk.CTkButton(
+            category_container,
+            text=category_text + "  ◀",  # 1. السهم بقى بعد النص وشكله باصص للشمال
+            font=("Segoe UI", 13, "bold"),
+            anchor="e",  # 2. المحاذاة بقت لليمين (East)
+            fg_color="#E2E8F0", text_color="#333333", hover_color="#CBD5E1",
+            height=35, corner_radius=6,
+            command=lambda c=category_text: self.toggle_menu(c)
+        )
+        main_btn.pack(fill="x", padx=2, pady=2)
+        self.sub_menus[f"{category_text}_btn"] = main_btn
+
+        # إنشاء الزراير الفرعية (زي "استعلام الحسابات")
+        for text, page_name in items:
+            sub_btn = ctk.CTkButton(
+                sub_frame,
+                text=text + "  ",  # ضفنا مساحة بعد النص
+                font=("Segoe UI", 12),
+                anchor="e",  # 3. المحاذاة لليمين
+                fg_color="transparent", text_color="#555555", hover_color="#F0F9F4",
+                height=30, corner_radius=6,
+                command=lambda p=page_name: self.show_page(p)
+            )
+            # 4. عكسنا الـ padx عشان المسافة الفاضية (الإزاحة) تكون من ناحية اليمين (5 من الشمال، 25 من اليمين)
+            sub_btn.pack(fill="x", padx=(5, 25), pady=1)
+
+            setattr(self, f"btn_{page_name}", sub_btn)
+
+    def toggle_menu(self, category):
+        sub_frame = self.sub_menus[category]
+        btn = self.sub_menus[f"{category}_btn"]
+        current_text = btn.cget("text")
+
+        if sub_frame.winfo_ismapped():
+            sub_frame.pack_forget()
+            # السهم المقفول باصص شمال ◀
+            btn.configure(text=current_text.replace("▼", "◀"))
+        else:
+            sub_frame.pack(fill="x")
+            # السهم المفتوح باصص تحت ▼
+            btn.configure(text=current_text.replace("◀", "▼"))
 
     def show_admin_activation_popup(self):
         """نافذة سرية للمدير لتفعيل الرخصة بتفتح بالدبل كليك"""
@@ -452,7 +522,7 @@ class FGSApp(customtkinter.CTk):
     def setup_pages(self):
         # الحاوية الرئيسية اللي بتتعرض فيها الشاشات
         self.content_area = ctk.CTkFrame(self, fg_color="transparent")
-        self.content_area.grid(row=0, column=1, sticky="nsew", padx=30, pady=30)
+        self.content_area.grid(row=0, column=0, sticky="nsew", padx=30, pady=30)
 
         # 1. شاشة استعلام الحسابات (Account Inquiry)
         self.page_nuwairy = ctk.CTkFrame(self.content_area, fg_color="transparent")
@@ -790,8 +860,8 @@ class FGSApp(customtkinter.CTk):
             show_y_scrollbar=True,
             show_row_index=False,
             show_top_left=False,
-            align="center",
-            header_align="center",
+            align="e",  # 👈 التعديل الأول: محاذاة البيانات لليمين
+            header_align="e",  # 👈 التعديل الثاني: محاذاة العناوين لليمين
             height=450,
             width=900,
             outline_thickness=1,
@@ -844,26 +914,27 @@ class FGSApp(customtkinter.CTk):
         header_inner = ctk.CTkFrame(header, fg_color="transparent")
         header_inner.pack(fill="x", padx=16, pady=14)
 
+        # 1. التعديل هنا: العنوان يروح يمين (right)
         title_wrap = ctk.CTkFrame(header_inner, fg_color="transparent")
-        title_wrap.pack(side="left", fill="x", expand=True)
+        title_wrap.pack(side="right", fill="x", expand=True)
 
         ctk.CTkLabel(
             title_wrap,
             text="🔍 استعلام حركات العملاء",
             font=("Segoe UI", 22, "bold"),
             text_color=FIB_GREEN
-        ).pack(anchor="w")
+        ).pack(anchor="e")  # المحاذاة يمين (e)
 
         ctk.CTkLabel(
             title_wrap,
             text="ابحث برقم العميل، اختر نوع الحساب والعملة، وحدد فترة التاريخ (اختياري).",
             font=("Segoe UI", 12),
             text_color="#6B7280"
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="e", pady=(4, 0))  # المحاذاة يمين (e)
 
-        # Actions (Right)
+        # 2. التعديل هنا: الزراير تروح شمال (left)
         actions = ctk.CTkFrame(header_inner, fg_color="transparent")
-        actions.pack(side="right")
+        actions.pack(side="left")
 
         def _clear_filters():
             if hasattr(self, 'sys_logger'):
@@ -893,6 +964,7 @@ class FGSApp(customtkinter.CTk):
                 except:
                     pass
 
+        # 3. التعديل هنا: ترتيب الزراير جوه الحاوية يبدأ من اليمين لليسار (side="right")
         self.btn_clear_nuwairy = ctk.CTkButton(
             actions,
             text="مسح",
@@ -904,7 +976,7 @@ class FGSApp(customtkinter.CTk):
             corner_radius=10,
             command=_clear_filters
         )
-        self.btn_clear_nuwairy.pack(side="left", padx=(0, 10))
+        self.btn_clear_nuwairy.pack(side="right", padx=(10, 0))  # عكسنا الـ padx
 
         self.btn_search_nuwairy = ctk.CTkButton(
             actions,
@@ -917,10 +989,10 @@ class FGSApp(customtkinter.CTk):
             corner_radius=10,
             command=self.nuwairy_fetch_transactions
         )
-        self.btn_search_nuwairy.pack(side="left")
+        self.btn_search_nuwairy.pack(side="right")
 
         # =========================
-        # Filters Card
+        # Filters Card (الـ Grid بتاعك هنا ممتاز جداً ومظبوط عربي)
         # =========================
         form_card = ctk.CTkFrame(
             page,
@@ -947,7 +1019,8 @@ class FGSApp(customtkinter.CTk):
             default="جاري التحميل...",
             title="اختر الفرع"
         )
-        self.cmb_branch_box.grid(row=0, column=2, sticky="ew", pady=(0, 8), padx=(10, 0))
+        # 4. التعديل هنا: عكسنا الـ padx في المربعات عشان تدي مسافة من ناحية اليمين
+        self.cmb_branch_box.grid(row=0, column=2, sticky="ew", pady=(0, 8), padx=(0, 10))
 
         ctk.CTkLabel(form, text="رقم العميل:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
             row=0, column=1, sticky="e", pady=(0, 8)
@@ -955,10 +1028,11 @@ class FGSApp(customtkinter.CTk):
         self.ent_client_no = ctk.CTkEntry(
             form,
             placeholder_text="اكتب رقم العميل واضغط Enter",
+            justify="right",  # إضافة: الكتابة جوه المربع تبدأ من اليمين
             height=40,
             corner_radius=10
         )
-        self.ent_client_no.grid(row=0, column=0, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.ent_client_no.grid(row=0, column=0, sticky="ew", pady=(0, 8), padx=(0, 10))
         self.ent_client_no.bind("<Return>", self.nuwairy_fetch_accounts)
 
         # Row 2
@@ -971,7 +1045,7 @@ class FGSApp(customtkinter.CTk):
             default="- أدخل العميل أولاً -",
             title="اختر نوع الحساب"
         )
-        self.cmb_acc_type_box.grid(row=1, column=2, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.cmb_acc_type_box.grid(row=1, column=2, sticky="ew", pady=(0, 8), padx=(0, 10))
 
         ctk.CTkLabel(form, text="العملة:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
             row=1, column=1, sticky="e", pady=(0, 8)
@@ -982,7 +1056,7 @@ class FGSApp(customtkinter.CTk):
             default="- أدخل العميل أولاً -",
             title="اختر العملة"
         )
-        self.cmb_currency_box.grid(row=1, column=0, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.cmb_currency_box.grid(row=1, column=0, sticky="ew", pady=(0, 8), padx=(0, 10))
 
         # Row 3 (Dates)
         ctk.CTkLabel(form, text="من تاريخ:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
@@ -991,10 +1065,11 @@ class FGSApp(customtkinter.CTk):
         self.ent_date_from = ctk.CTkEntry(
             form,
             placeholder_text="YYYY-MM-DD أو YYYYMMDD",
+            justify="right",  # إضافة
             height=40,
             corner_radius=10
         )
-        self.ent_date_from.grid(row=2, column=2, sticky="ew", padx=(10, 0))
+        self.ent_date_from.grid(row=2, column=2, sticky="ew", padx=(0, 10))
 
         ctk.CTkLabel(form, text="إلى تاريخ:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
             row=2, column=1, sticky="e"
@@ -1002,10 +1077,11 @@ class FGSApp(customtkinter.CTk):
         self.ent_date_to = ctk.CTkEntry(
             form,
             placeholder_text="YYYY-MM-DD أو YYYYMMDD",
+            justify="right",  # إضافة
             height=40,
             corner_radius=10
         )
-        self.ent_date_to.grid(row=2, column=0, sticky="ew", padx=(10, 0))
+        self.ent_date_to.grid(row=2, column=0, sticky="ew", padx=(0, 10))
 
         # =========================
         # Info Card
@@ -1022,23 +1098,24 @@ class FGSApp(customtkinter.CTk):
         info_inner = ctk.CTkFrame(info_card, fg_color="transparent")
         info_inner.pack(fill="x", padx=16, pady=14)
 
+        # 5. التعديل هنا: محاذاة النص لليمين (anchor="e")
         ctk.CTkLabel(
             info_inner,
             text="بيانات العميل",
             font=("Segoe UI", 12, "bold"),
             text_color=COLOR_TEXT_MAIN
-        ).pack(anchor="w")
+        ).pack(anchor="e")
 
         self.lbl_branch_info = ctk.CTkLabel(
             info_inner,
             text="—",
             font=("Segoe UI", 12),
             text_color="#4B5563",
-            justify="left",
-            anchor="w",
+            justify="right",  # التعديل هنا لليمين
+            anchor="e",  # التعديل هنا لليمين
             wraplength=900
         )
-        self.lbl_branch_info.pack(anchor="w", pady=(6, 0))
+        self.lbl_branch_info.pack(anchor="e", pady=(6, 0))
 
         # =========================
         # Results (Excel-like Sheet) + Toolbar
@@ -1058,9 +1135,12 @@ class FGSApp(customtkinter.CTk):
         toolbar = ctk.CTkFrame(table_inner, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 10))
 
-        self.ent_search = ctk.CTkEntry(toolbar, placeholder_text="بحث داخل النتائج…", height=36, corner_radius=10)
-        self.ent_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        # 6. التعديل هنا: شريط البحث يروح يمين
+        self.ent_search = ctk.CTkEntry(toolbar, placeholder_text="بحث داخل النتائج…", justify="right", height=36,
+                                       corner_radius=10)
+        self.ent_search.pack(side="right", fill="x", expand=True, padx=(10, 0))
 
+        # زراير التصدير تترص من اليمين للشمال
         btn_export = ctk.CTkButton(
             toolbar, text="🖨️ Export PDF",
             fg_color=FIB_GREEN, hover_color="#0B5C3A",
@@ -1068,7 +1148,7 @@ class FGSApp(customtkinter.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.nuwairy_export_pdf
         )
-        btn_export.pack(side="left")
+        btn_export.pack(side="right")
 
         btn_export_excel = ctk.CTkButton(
             toolbar, text="📊 Export Excel",
@@ -1077,7 +1157,7 @@ class FGSApp(customtkinter.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.nuwairy_export_excel
         )
-        btn_export_excel.pack(side="left", padx=(10, 0))
+        btn_export_excel.pack(side="right", padx=(0, 10))
 
         sheet_frame = ctk.CTkFrame(table_inner, fg_color="transparent")
         sheet_frame.pack(fill="both", expand=True)
@@ -1164,6 +1244,7 @@ class FGSApp(customtkinter.CTk):
 
         import threading
         threading.Thread(target=fetch_task, daemon=True).start()
+
     def _init_gl_sheet(self, parent):
         from tksheet import Sheet
 
@@ -1173,8 +1254,8 @@ class FGSApp(customtkinter.CTk):
             show_y_scrollbar=True,
             show_row_index=False,
             show_top_left=False,
-            align="center",
-            header_align="center",
+            align="e",  # 👈 التعديل الأول: محاذاة بيانات الخلايا لليمين
+            header_align="e",  # 👈 التعديل الثاني: محاذاة عناوين الأعمدة لليمين
             height=450,
             width=900,
             outline_thickness=1,
@@ -1230,26 +1311,27 @@ class FGSApp(customtkinter.CTk):
         header_inner = ctk.CTkFrame(header, fg_color="transparent")
         header_inner.pack(fill="x", padx=16, pady=14)
 
+        # 1. العنوان والعنوان الفرعي لليمين
         title_wrap = ctk.CTkFrame(header_inner, fg_color="transparent")
-        title_wrap.pack(side="left", fill="x", expand=True)
+        title_wrap.pack(side="right", fill="x", expand=True)  # التعديل هنا: side="right"
 
         ctk.CTkLabel(
             title_wrap,
             text="🔍 استعلام الأستاذ العام",
             font=("Segoe UI", 22, "bold"),
             text_color=FIB_GREEN
-        ).pack(anchor="w")
+        ).pack(anchor="e")  # التعديل هنا: anchor="e"
 
         ctk.CTkLabel(
             title_wrap,
             text="ابحث بحساب الأستاذ العام، اختر الفرع والعملة، وحدد فترة التاريخ.",
             font=("Segoe UI", 12),
             text_color="#6B7280"
-        ).pack(anchor="w", pady=(4, 0))
+        ).pack(anchor="e", pady=(4, 0))  # التعديل هنا: anchor="e"
 
-        # Actions (Right)
+        # 2. أزرار الأكشن لليسار (وتترص من اليمين للشمال)
         actions = ctk.CTkFrame(header_inner, fg_color="transparent")
-        actions.pack(side="right")
+        actions.pack(side="left")  # التعديل هنا: side="left" (عكس الـ title_wrap)
 
         self.btn_clear_gl = ctk.CTkButton(
             actions,
@@ -1262,7 +1344,7 @@ class FGSApp(customtkinter.CTk):
             corner_radius=10,
             command=self.gl_clear
         )
-        self.btn_clear_gl.pack(side="left", padx=(0, 10))
+        self.btn_clear_gl.pack(side="right", padx=(10, 0))  # التعديل هنا: side="right" وعكس الـ padx
 
         self.btn_search_gl = ctk.CTkButton(
             actions,
@@ -1275,7 +1357,7 @@ class FGSApp(customtkinter.CTk):
             corner_radius=10,
             command=self.gl_search
         )
-        self.btn_search_gl.pack(side="left")
+        self.btn_search_gl.pack(side="right")  # التعديل هنا: side="right"
 
         # =========================
         # Filters Card
@@ -1305,17 +1387,17 @@ class FGSApp(customtkinter.CTk):
             default="جاري التحميل...",
             title="اختر الفرع"
         )
-        self.cmb_gl_branch_box.grid(row=0, column=2, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.cmb_gl_branch_box.grid(row=0, column=2, sticky="ew", pady=(0, 8), padx=(0, 10))  # عكس الـ padx
 
         ctk.CTkLabel(form, text="الأستاذ العام:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
             row=0, column=1, sticky="e", pady=(0, 8)
         )
 
-        # 🌟 التعديل هنا: تعريف الدوال أولاً قبل استخدامها في الزرار 🌟
+        # 🌟 التعديل هنا: تعريف الدوال أولاً قبل استخدامها في الزرار 🌟 (لم يتم التعديل في المنطق)
         def set_gl_acc_value(selected_val):
-            # بنقوله لو الزرار متسجل فعلاً، غير النص بتاعه
             if hasattr(self, 'btn_gl_acc_select'):
-                self.btn_gl_acc_select.configure(text=f"{selected_val} 🔽")
+                # إضافة: عكسنا السهم ليتناسب مع العربي (السهم على اليسار)
+                self.btn_gl_acc_select.configure(text=f"🔽 {selected_val}")
                 self.selected_gl_acc = selected_val
             else:
                 print("تنبيه: زرار الأستاذ العام غير مسجل في الـ self")
@@ -1324,29 +1406,26 @@ class FGSApp(customtkinter.CTk):
             data = getattr(self, 'all_gl_codes', [])
             if not data:
                 data = ["جاري تحميل البيانات، يرجى الانتظار ثانية..."]
-            # التأكد إن الـ PremiumSearchPopup موجودة في الكود
             PremiumSearchPopup(self, "اختر الأستاذ العام", data, set_gl_acc_value)
 
         # ==========================================
         # زرار الأستاذ العام الأخضر (Solid Green)
         # ==========================================
-        # تأكد إنك كاتب self. قبل اسم الزرار
         self.btn_gl_acc_select = ctk.CTkButton(
             form,
-            text="- اختر الأستاذ العام - 🔽",
+            text="🔽 - اختر الأستاذ العام -",  # التعديل هنا: السهم على اليسار
             font=("Segoe UI", 12, "bold"),
             text_color="white",
-            fg_color=FIB_GREEN,  # لون البنك
+            fg_color=FIB_GREEN,
             hover_color="#08472C",
             border_width=0,
             height=40,
             corner_radius=10,
-            anchor="e",
+            anchor="e",  # النص يبدأ من اليمين
             command=open_gl_acc_popup_cmd
         )
-        self.btn_gl_acc_select.grid(row=0, column=0, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.btn_gl_acc_select.grid(row=0, column=0, sticky="ew", pady=(0, 8), padx=(0, 10))  # عكس الـ padx
 
-        # خدعة بسيطة لضمان عمل دالة البحث والمسح بدون تعديل
         self.combo_gl_acc = self.btn_gl_acc_select
         self.combo_gl_acc.get = lambda: getattr(self, 'selected_gl_acc', "")
 
@@ -1360,7 +1439,7 @@ class FGSApp(customtkinter.CTk):
             default="جاري التحميل...",
             title="اختر العملة"
         )
-        self.cmb_gl_curr_box.grid(row=1, column=2, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.cmb_gl_curr_box.grid(row=1, column=2, sticky="ew", pady=(0, 8), padx=(0, 10))  # عكس الـ padx
 
         ctk.CTkLabel(form, text="من تاريخ:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
             row=1, column=1, sticky="e", pady=(0, 8)
@@ -1368,10 +1447,11 @@ class FGSApp(customtkinter.CTk):
         self.ent_gl_date_from = ctk.CTkEntry(
             form,
             placeholder_text="YYYY-MM-DD",
+            justify="right",  # التعديل هنا: المؤشر يبدأ من اليمين
             height=40,
             corner_radius=10
         )
-        self.ent_gl_date_from.grid(row=1, column=0, sticky="ew", pady=(0, 8), padx=(10, 0))
+        self.ent_gl_date_from.grid(row=1, column=0, sticky="ew", pady=(0, 8), padx=(0, 10))  # عكس الـ padx
 
         # Row 3 (إلى تاريخ - زرار التحديث)
         ctk.CTkLabel(form, text="إلى تاريخ:", font=label_font, text_color=COLOR_TEXT_MAIN).grid(
@@ -1380,12 +1460,12 @@ class FGSApp(customtkinter.CTk):
         self.ent_gl_date_to = ctk.CTkEntry(
             form,
             placeholder_text="YYYY-MM-DD",
+            justify="right",  # التعديل هنا: المؤشر يبدأ من اليمين
             height=40,
             corner_radius=10
         )
-        self.ent_gl_date_to.grid(row=2, column=0, sticky="ew", padx=(10, 0))
+        self.ent_gl_date_to.grid(row=2, column=0, sticky="ew", padx=(0, 10))  # عكس الـ padx
 
-        # زر تحديث القوائم (في المكان الفاضي عشان الشكل يكمل)
         def refresh_all_gl_data():
             if hasattr(self, 'sys_logger'):
                 self.sys_logger.log("🔄 المستخدم طلب تحديث قوائم (الفرع، الأستاذ العام، العملات) يدوياً.")
@@ -1395,7 +1475,7 @@ class FGSApp(customtkinter.CTk):
 
         self.btn_refresh_gl = ctk.CTkButton(
             form,
-            text="🔄 تحديث القوائم",
+            text="تحديث القوائم 🔄",  # التعديل هنا: الأيقونة لليسار
             fg_color="#F3F4F6",
             text_color="#111827",
             hover_color="#E5E7EB",
@@ -1404,7 +1484,7 @@ class FGSApp(customtkinter.CTk):
             corner_radius=10,
             command=refresh_all_gl_data
         )
-        self.btn_refresh_gl.grid(row=2, column=2, sticky="ew", padx=(10, 0))
+        self.btn_refresh_gl.grid(row=2, column=2, sticky="ew", padx=(0, 10))  # عكس الـ padx
 
         # =========================
         # Info Card
@@ -1421,23 +1501,24 @@ class FGSApp(customtkinter.CTk):
         info_inner = ctk.CTkFrame(info_card, fg_color="transparent")
         info_inner.pack(fill="x", padx=16, pady=14)
 
+        # 3. محاذاة كارت المعلومات لليمين
         ctk.CTkLabel(
             info_inner,
             text="بيانات الحساب",
             font=("Segoe UI", 12, "bold"),
             text_color=COLOR_TEXT_MAIN
-        ).pack(anchor="w")
+        ).pack(anchor="e")  # التعديل هنا: anchor="e"
 
         self.lbl_gl_info = ctk.CTkLabel(
             info_inner,
             text="—",
             font=("Segoe UI", 12),
             text_color="#4B5563",
-            justify="left",
-            anchor="w",
+            justify="right",  # التعديل هنا: justify="right"
+            anchor="e",  # التعديل هنا: anchor="e"
             wraplength=900
         )
-        self.lbl_gl_info.pack(anchor="w", pady=(6, 0))
+        self.lbl_gl_info.pack(anchor="e", pady=(6, 0))  # التعديل هنا: anchor="e"
 
         # =========================
         # Results (Excel-like Sheet) + Toolbar
@@ -1457,9 +1538,16 @@ class FGSApp(customtkinter.CTk):
         toolbar = ctk.CTkFrame(table_inner, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 10))
 
-        self.ent_gl_search = ctk.CTkEntry(toolbar, placeholder_text="بحث داخل النتائج…", height=36,
-                                          corner_radius=10)
-        self.ent_gl_search.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        # 4. شريط البحث وأزرار التصدير لليمين
+        self.ent_gl_search = ctk.CTkEntry(
+            toolbar,
+            placeholder_text="بحث داخل النتائج…",
+            justify="right",  # التعديل هنا: المؤشر يبدأ يمين
+            height=36,
+            corner_radius=10
+        )
+        self.ent_gl_search.pack(side="right", fill="x", expand=True,
+                                padx=(10, 0))  # التعديل هنا: side="right" وعكس الـ padx
 
         btn_export = ctk.CTkButton(
             toolbar, text="🖨️ Export PDF",
@@ -1468,7 +1556,7 @@ class FGSApp(customtkinter.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.gl_export_pdf
         )
-        btn_export.pack(side="left")
+        btn_export.pack(side="right")  # التعديل هنا: side="right"
 
         btn_export_excel = ctk.CTkButton(
             toolbar, text="📊 Export Excel",
@@ -1477,7 +1565,7 @@ class FGSApp(customtkinter.CTk):
             font=("Segoe UI", 12, "bold"),
             command=self.gl_export_excel
         )
-        btn_export_excel.pack(side="left", padx=(10, 0))
+        btn_export_excel.pack(side="right", padx=(0, 10))  # التعديل هنا: side="right" وعكس الـ padx
 
         sheet_frame = ctk.CTkFrame(table_inner, fg_color="transparent")
         sheet_frame.pack(fill="both", expand=True)
