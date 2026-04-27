@@ -371,7 +371,7 @@ class FGSApp(customtkinter.CTk):
                 ("أستاذ الحسابات العام", "gl_inquiry"),
             ],
             "👥 شؤون العملاء": [
-                ("بحث عن عميل", "customer"),
+               # ("بحث عن عميل", "customer"),
             ]
         }
 
@@ -533,7 +533,7 @@ class FGSApp(customtkinter.CTk):
         self.setup_gl_inquiry_ui(self.page_gl_inquiry)
 
         self.page_customer = ctk.CTkFrame(self.content_area, fg_color="transparent")
-        self.setup_customer_inquiry_ui(self.page_customer)
+        #self.setup_customer_inquiry_ui(self.page_customer)
 
     def show_page(self, name):
         if hasattr(self, 'sys_logger'):
@@ -3586,6 +3586,9 @@ class FGSApp(customtkinter.CTk):
         threading.Thread(target=self._bg_fetch_transactions_logic, args=(client_no, acc_type_name, currency_name),
                          daemon=True).start()
 
+
+
+
     def _bg_fetch_transactions_logic(self, client_no, acc_type_name, currency_name):
         import pandas as pd
         from sqlalchemy import text
@@ -3622,7 +3625,7 @@ class FGSApp(customtkinter.CTk):
                     cleaned_cnm = add_df["cnm"].astype(str).str.strip()
                     self.add_code_to_name = dict(zip(cleaned_ccod, cleaned_cnm))
 
-                    print(f"🔴 DEBUG 1: تم تحميل عدد {len(self.add_code_to_name)} كود من جدول TBL_add_codes")
+                    # print(f"🔴 DEBUG 1: تم تحميل عدد {len(self.add_code_to_name)} كود من جدول TBL_add_codes")
                 except Exception as e:
                     if hasattr(self, 'sys_logger'):
                         self.sys_logger.log(f"⚠️ فشل جلب جدول TBL_add_codes: {e}", "WARNING")
@@ -3645,37 +3648,59 @@ class FGSApp(customtkinter.CTk):
             branch_code = str(self.branch_mapping.get(branch_name, "")).strip()
             table_name = self.branch_table_mapping.get(branch_code)
 
-            # ✅ حساب الرصيد في 31-03-2017 باستخدام Pandas لمنع أخطاء الـ Execution
+            # =========================================================
+            # بداية التدخل الجراحي الموحد (PBAL + رصيد 2017 + الرصيد الافتتاحي)
+            # =========================================================
+
+            pbal_val = 0.0
+            actual_opening_balance = 0.0
             balance_2017_val = 0.0
+
+            # ✅ 1. استخراج الرصيد الثابت (PBAL) لتاريخ 30-06-2016
             try:
-                bal_query = f"""
-                    SELECT ncod1, namt
-                    FROM {table_name} WITH (NOLOCK)
-                    WHERE NCLNT = :client_no 
-                      AND ngl = :acc_code 
-                      AND ncur = :curr_code 
-                      AND ndatm <= '20170331'
-                """
-                bal_params = {"client_no": client_no, "acc_code": str(acc_type_code), "curr_code": str(currency_code)}
-
+                # 🛑 تنبيه هام: غير 'TBL_Accounts_Master' لاسم الجدول الحقيقي عندك اللي فيه الـ PBAL
+                pbal_query = text(f"""
+                            SELECT ISNULL(PBAL, 0) 
+                            FROM {table_name} 
+                            WHERE NCLNT = :client_no AND ngl = :acc_code AND ncur = :curr_code
+                        """)
                 with engine.connect() as conn:
-                    bal_df = pd.read_sql(text(bal_query), conn, params=bal_params)
+                    res = conn.execute(pbal_query, {"client_no": client_no, "acc_code": str(acc_type_code),
+                                                    "curr_code": str(currency_code)}).fetchone()
+                    if res:
+                        pbal_val = float(res[0])
+            except Exception as e:
+                if hasattr(self, 'sys_logger'):
+                    self.sys_logger.log(f"⚠️ فشل جلب PBAL: {e}", "WARNING")
 
-                for r_bal in bal_df.itertuples(index=False):
-                    # التعديل الأول: الاعتماد على رقم الكود لتحديد الإضافة والخصم
+            # ✅ 2. حساب رصيد 2017 الصحيح (رصيد الافتتاح PBAL + الحركات لحد 31-03-2017)
+            balance_2017_val = pbal_val
+            try:
+                bal_2017_query = f"""
+                            SELECT ncod1, namt
+                            FROM {table_name} WITH (NOLOCK)
+                            WHERE NCLNT = :client_no 
+                              AND ngl = :acc_code 
+                              AND ncur = :curr_code 
+                              AND ndatm > '20160630' 
+                              AND ndatm <= '20170331'
+                        """
+                bal_2017_params = {"client_no": client_no, "acc_code": str(acc_type_code),
+                                   "curr_code": str(currency_code)}
+                with engine.connect() as conn:
+                    bal_2017_df = pd.read_sql(text(bal_2017_query), conn, params=bal_2017_params)
+
+                for r_bal in bal_2017_df.itertuples(index=False):
                     t_code = str(getattr(r_bal, "ncod1", "")).strip()
-
-                    # معالجة لو القيمة NULL
                     t_amt_raw = getattr(r_bal, "namt", 0.0)
                     t_amt = float(t_amt_raw if pd.notnull(t_amt_raw) else 0.0)
                     amt_abs = abs(t_amt)
 
-                    if t_code in ("3", "4"):  # سحب أو خصم (مدين)
+                    if t_code in ("3", "4"):
                         balance_2017_val -= amt_abs
-                    elif t_code in ("1", "2"):  # إيداع أو إضافة (دائن)
+                    elif t_code in ("1", "2"):
                         balance_2017_val += amt_abs
                     else:
-                        # حل احتياطي لو ظهر كود جديد غير معروف
                         if t_amt < 0:
                             balance_2017_val -= amt_abs
                         else:
@@ -3683,6 +3708,74 @@ class FGSApp(customtkinter.CTk):
             except Exception as e:
                 if hasattr(self, 'sys_logger'):
                     self.sys_logger.log(f"⚠️ فشل جلب رصيد 2017: {e}", "WARNING")
+
+            # =========================================================
+            # ✅ 3. حساب الرصيد الافتتاحي الفعلي + (ديباج / Debugging)
+            # =========================================================
+            if date_from_val:
+                try:
+                    bal_query = f"""
+                                    SELECT ncod1, namt
+                                    FROM {table_name} WITH (NOLOCK)
+                                    WHERE NCLNT = :client_no 
+                                      AND ngl = :acc_code 
+                                      AND ncur = :curr_code 
+                                      AND ndatm < :date_from
+                                """
+                    bal_params = {"client_no": client_no, "acc_code": str(acc_type_code),
+                                  "curr_code": str(currency_code), "date_from": date_from_val}
+
+                    # --- سطور الديباج الأولى ---
+                    #print(f"\n{'=' * 40}")
+                    #print(f"🔴 DEBUG: جاري حساب الرصيد الافتتاحي لحد قبل يوم: {date_from_val}")
+                    #print(f"🔴 DEBUG: المعاملات المرسلة للداتابيز -> {bal_params}")
+
+                    with engine.connect() as conn:
+                        bal_df = pd.read_sql(text(bal_query), conn, params=bal_params)
+
+                    #print(f"🔴 DEBUG: تم سحب عدد ({len(bal_df)}) حركة من الداتابيز.")
+
+                    # متغيرات مؤقتة عشان نطبع المجموع
+                    debug_total_in = 0.0
+                    debug_total_out = 0.0
+
+                    for r_bal in bal_df.itertuples(index=False):
+                        t_code = str(getattr(r_bal, "ncod1", "")).strip()
+                        t_amt = float(getattr(r_bal, "namt", 0.0) or 0.0)
+                        amt_abs = abs(t_amt)
+
+                        if t_code in ("3", "4"):  # خصم
+                            actual_opening_balance -= amt_abs
+                            debug_total_out += amt_abs
+                        elif t_code in ("1", "2"):  # إضافة
+                            actual_opening_balance += amt_abs
+                            debug_total_in += amt_abs
+                        else:
+                            if t_amt < 0:
+                                actual_opening_balance -= amt_abs
+                                debug_total_out += amt_abs
+                            else:
+                                actual_opening_balance += amt_abs
+                                debug_total_in += amt_abs
+
+                    # --- سطور الديباج النهائية ---
+                   # print(f"🔴 DEBUG: إجمالي اللي دخل الحساب (إضافات) = {debug_total_in:,.2f}")
+                    #print(f"🔴 DEBUG: إجمالي اللي خرج (خصومات) = {debug_total_out:,.2f}")
+                    #print(f"🔴 DEBUG: الرصيد الافتتاحي النهائي المحسوب = {actual_opening_balance:,.2f}")
+                    #print(f"{'=' * 40}\n")
+
+                    # تسجيل الديباج في اللوج بتاع البرنامج لو موجود
+                    if hasattr(self, 'sys_logger'):
+                        self.sys_logger.log(
+                            f"🔎 ديباج الرصيد الافتتاحي -> إضافات: {debug_total_in:,.2f} | خصومات: {debug_total_out:,.2f} | الرصيد النهائي: {actual_opening_balance:,.2f}")
+
+                except Exception as e:
+                    #print(f"🔴 DEBUG ERROR: حصل خطأ أثناء الحساب: {e}")
+                    if hasattr(self, 'sys_logger'):
+                        self.sys_logger.log(f"⚠️ فشل حساب الرصيد الافتتاحي: {e}", "WARNING")
+            # =========================================================
+            # نهاية التدخل الجراحي الموحد
+            # =========================================================
 
             query = f"""
                 SELECT TOP 5000 ngl, ncur, ndatm, nbian, namt, ncod1, nsb, nseq, ncod2
@@ -3704,8 +3797,6 @@ class FGSApp(customtkinter.CTk):
 
             with engine.connect() as conn:
                 view_df = pd.read_sql(text(query), conn, params=params_dict)
-
-
 
             if view_df.empty:
                 self.after(0, lambda: messagebox.showinfo("معلومة", "لا توجد حركات مطابقة للبيانات المختارة."))
@@ -3741,7 +3832,6 @@ class FGSApp(customtkinter.CTk):
                 ndatm_fmt = f"{ndatm[:4]}-{ndatm[4:6]}-{ndatm[6:]}" if len(ndatm) == 8 and ndatm.isdigit() else ndatm
 
                 # التعديل الثاني: الاعتماد على رقم الكود لتصنيف الحركات في كشف الحساب
-                # التعديل الثاني: الاعتماد على رقم الكود لتصنيف الحركات في كشف الحساب
                 trx_code = str(getattr(r, "ncod1", "")).strip()
                 # 🛡️ الحماية الأولى: ضفنا str()
                 trx_name = str(trx_map.get(trx_code, trx_code) or "").strip()
@@ -3749,11 +3839,9 @@ class FGSApp(customtkinter.CTk):
                 # 🆕 استخراج ncod2 والبحث عن اسمه في القاموس
                 ncod2_val = str(getattr(r, "ncod2", "")).strip()
 
-                #print(ncod2_val)
-
                 # 🛡️ الحماية الثانية الأهم: ضفنا str() هنا عشان ميديناش خطأ الـ float
                 doc_name = str(add_map.get(ncod2_val, "")).strip()
-                #print(doc_name)
+
                 amt = float(getattr(r, "namt", 0.0))
                 amt_abs = abs(amt)
 
@@ -3775,7 +3863,7 @@ class FGSApp(customtkinter.CTk):
                     'gl_main_name': acc_map.get(str(getattr(r, "ngl", "")).strip(), str(getattr(r, "ngl", "")).strip()),
                     'gl_sub': str(getattr(r, "nsb", "")).strip(),
                     'nseq': str(getattr(r, "nseq", "")).strip(),
-                    'doc_name': doc_name # 🆕 إضافة اسم المستند للداتا
+                    'doc_name': doc_name  # 🆕 إضافة اسم المستند للداتا
                 })
 
             rows_data.sort(key=lambda x: (
@@ -3784,13 +3872,39 @@ class FGSApp(customtkinter.CTk):
                 max(x['credit'], x['debit'])
             ))
 
-            running_balance = 0.0
+            # ✅ 3. تطبيق التدخل الجراحي جوه كشف الحساب بشكل مرئي
+            running_balance = actual_opening_balance
+            passed_cutoff = True if (date_from_val and date_from_val > '20160630') else False
+
+            final_rows_data = []  # لستة جديدة هنبني فيها الحركات
+
             for item in rows_data:
+                # اللقطة: لو عدينا يوم 30-6، هنزرع سطر وهمي في كشف الحساب يوضح الرصيد الجديد
+                if not passed_cutoff and item['ndatm_raw'] > '20160630':
+                    settlement_row = {
+                        'ndatm_raw': '20160630',
+                        'ndatm_fmt': '2016-06-30',
+                        'desc': 'رصيد منقول (PBAL)',
+                        'credit': 0.0,
+                        'debit': 0.0,
+                        'trx_name': 'تسوية',
+                        'gl_main_name': '',
+                        'gl_sub': '',
+                        'nseq': '',
+                        'doc_name': '',
+                        'balance': pbal_val
+                    }
+                    final_rows_data.append(settlement_row)  # ضفنا سطر التسوية الأول
+                    running_balance = pbal_val
+                    passed_cutoff = True
+
+                # بعدين نحسب الحركة الطبيعية بتاعتنا
                 running_balance += item['credit'] - item['debit']
                 item['balance'] = running_balance
+                final_rows_data.append(item)
 
-            opening_balance = rows_data[0]['balance'] - rows_data[0]['credit'] + rows_data[0][
-                'debit'] if rows_data else 0.0
+            opening_balance = actual_opening_balance
+            rows_data = final_rows_data  # نحدث الداتا بتاعتنا بالداتا الجديدة اللي فيها سطر التسوية
 
             def fmt_money(x: float) -> str:
                 return f"{x:,.2f}" if x != 0.0 else ""
@@ -3807,7 +3921,7 @@ class FGSApp(customtkinter.CTk):
                     item['gl_main_name'],
                     item['gl_sub'],
                     item['nseq'],
-                    item['doc_name'] # Index [9]
+                    item['doc_name']  # Index [9]
                 ])
 
             if not hasattr(self, "sheet"): return
@@ -3840,7 +3954,6 @@ class FGSApp(customtkinter.CTk):
     def _reset_search_btn(self):
         if hasattr(self, 'btn_search'):
             self.after(0, lambda: self.btn_search.configure(text="بحث", state="normal"))
-
     def nuwairy_export_pdf(self):
 
         from tkinter import filedialog, messagebox
@@ -4282,10 +4395,18 @@ class FGSApp(customtkinter.CTk):
                 # 🆕 ضيف السطر ده عشان تسحب اسم المستند اللي جه من الداتا
                 doc_name = (r[9] if len(r) > 9 else "")
 
-                desc_flow = [Paragraph(ar(t(desc) if desc else "—"), st_right)]
-                if nseq: desc_flow.append(Paragraph(ar(f"{t('رقم النمارة:')} {nseq}"), st_right_small))
-                # 🆕 ضيف السطر ده عشان يطبع اسم المستند لو موجود تحت رقم النمارة
-                if doc_name: desc_flow.append(Paragraph(ar(f"المستند: {doc_name}"), st_right_small))
+                desc_flow = []
+
+                # 1. المستند الأول (لو موجود)
+                if doc_name:
+                    desc_flow.append(Paragraph(ar(f"{doc_name}"), st_right_small))
+
+                # 2. البيان (أساسي)
+                desc_flow.append(Paragraph(ar(t(desc) if desc else "—"), st_right))
+
+                # 3. رقم النمارة (لو موجود)
+                if nseq:
+                    desc_flow.append(Paragraph(ar(f"{t('رقم النمارة:')} {nseq}"), st_right_small))
                 if lang == "en":
                     table_data.append([date, desc_flow, debit, credit, bal])
                 else:
