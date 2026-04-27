@@ -3616,7 +3616,7 @@ class FGSApp(customtkinter.CTk):
                     self.trx_code_to_name = dict(
                         zip(trx_df["ncod1"].astype(str).str.strip(), trx_df["ntnm"].astype(str).str.strip()))
 
-                # ✅ جبناه على نفس المحاذاة (برا الـ if اللي فوق)
+            # ✅ جبناه على نفس المحاذاة (برا الـ if اللي فوق)
             if not hasattr(self, "add_code_to_name") or not self.add_code_to_name:
                 try:
                     add_df = pd.read_sql("SELECT ccod, cnm FROM dbo.TBL_add_codes", engine)
@@ -3669,6 +3669,9 @@ class FGSApp(customtkinter.CTk):
                                                     "curr_code": str(currency_code)}).fetchone()
                     if res:
                         pbal_val = float(res[0])
+                        # 🔥 تعديل تصفير المكشوف: لو رصيد المنقول نفسه جاي بالسالب نصفره
+                        if pbal_val < 0:
+                            pbal_val = 0.0
             except Exception as e:
                 if hasattr(self, 'sys_logger'):
                     self.sys_logger.log(f"⚠️ فشل جلب PBAL: {e}", "WARNING")
@@ -3714,34 +3717,29 @@ class FGSApp(customtkinter.CTk):
             # =========================================================
             if date_from_val:
                 try:
+                    # 🔥 تعديل: ضفنا ndatm للـ SELECT و ORDER BY عشان نحسب الرصيد حركة بحركة صح
                     bal_query = f"""
-                                    SELECT ncod1, namt
+                                    SELECT ncod1, namt, ndatm
                                     FROM {table_name} WITH (NOLOCK)
                                     WHERE NCLNT = :client_no 
                                       AND ngl = :acc_code 
                                       AND ncur = :curr_code 
                                       AND ndatm < :date_from
+                                    ORDER BY ndatm ASC
                                 """
                     bal_params = {"client_no": client_no, "acc_code": str(acc_type_code),
                                   "curr_code": str(currency_code), "date_from": date_from_val}
 
-                    # --- سطور الديباج الأولى ---
-                    #print(f"\n{'=' * 40}")
-                    #print(f"🔴 DEBUG: جاري حساب الرصيد الافتتاحي لحد قبل يوم: {date_from_val}")
-                    #print(f"🔴 DEBUG: المعاملات المرسلة للداتابيز -> {bal_params}")
-
                     with engine.connect() as conn:
                         bal_df = pd.read_sql(text(bal_query), conn, params=bal_params)
 
-                    #print(f"🔴 DEBUG: تم سحب عدد ({len(bal_df)}) حركة من الداتابيز.")
-
-                    # متغيرات مؤقتة عشان نطبع المجموع
                     debug_total_in = 0.0
                     debug_total_out = 0.0
 
                     for r_bal in bal_df.itertuples(index=False):
                         t_code = str(getattr(r_bal, "ncod1", "")).strip()
                         t_amt = float(getattr(r_bal, "namt", 0.0) or 0.0)
+                        t_ndatm = str(getattr(r_bal, "ndatm", "")).strip() # 🔥 استخراج التاريخ
                         amt_abs = abs(t_amt)
 
                         if t_code in ("3", "4"):  # خصم
@@ -3758,19 +3756,15 @@ class FGSApp(customtkinter.CTk):
                                 actual_opening_balance += amt_abs
                                 debug_total_in += amt_abs
 
-                    # --- سطور الديباج النهائية ---
-                   # print(f"🔴 DEBUG: إجمالي اللي دخل الحساب (إضافات) = {debug_total_in:,.2f}")
-                    #print(f"🔴 DEBUG: إجمالي اللي خرج (خصومات) = {debug_total_out:,.2f}")
-                    #print(f"🔴 DEBUG: الرصيد الافتتاحي النهائي المحسوب = {actual_opening_balance:,.2f}")
-                    #print(f"{'=' * 40}\n")
+                        # 🔥 تعديل تصفير المكشوف: لو الرصيد الافتتاحي نزل سالب قبل أو في 30-6 بنصفره
+                        if actual_opening_balance < 0 and t_ndatm <= '20160630':
+                            actual_opening_balance = 0.0
 
-                    # تسجيل الديباج في اللوج بتاع البرنامج لو موجود
                     if hasattr(self, 'sys_logger'):
                         self.sys_logger.log(
                             f"🔎 ديباج الرصيد الافتتاحي -> إضافات: {debug_total_in:,.2f} | خصومات: {debug_total_out:,.2f} | الرصيد النهائي: {actual_opening_balance:,.2f}")
 
                 except Exception as e:
-                    #print(f"🔴 DEBUG ERROR: حصل خطأ أثناء الحساب: {e}")
                     if hasattr(self, 'sys_logger'):
                         self.sys_logger.log(f"⚠️ فشل حساب الرصيد الافتتاحي: {e}", "WARNING")
             # =========================================================
@@ -3808,18 +3802,15 @@ class FGSApp(customtkinter.CTk):
                                                                     reset_row_positions=True))
                 return
 
-            # ✅ تنظيف البيانات من الـ nan بشكل جذري
             view_df["nbian"] = view_df["nbian"].fillna("").astype(str).str.strip()
             view_df["nbian"] = view_df["nbian"].replace(["nan", "NaN", "None"], "")
 
             view_df["ncod1"] = view_df["ncod1"].astype(str).str.strip()
             view_df["namt"] = pd.to_numeric(view_df["namt"], errors="coerce").fillna(0)
 
-            # 🆕 تنظيف عمود ncod2 لو موجود
             if "ncod2" in view_df.columns:
                 view_df["ncod2"] = view_df["ncod2"].fillna("").astype(str).str.strip()
                 view_df["ncod2"] = view_df["ncod2"].replace(["nan", "NaN", "None", "<NA>"], "")
-                # في حالة إن البانداس حول الرقم لـ float (مثلا 1.0 بدل 1) بنشيل الـ .0
                 view_df["ncod2"] = view_df["ncod2"].apply(lambda x: x[:-2] if str(x).endswith(".0") else x)
 
             trx_map = getattr(self, "trx_code_to_name", {})
@@ -3831,26 +3822,19 @@ class FGSApp(customtkinter.CTk):
                 ndatm = str(getattr(r, "ndatm", "")).strip()
                 ndatm_fmt = f"{ndatm[:4]}-{ndatm[4:6]}-{ndatm[6:]}" if len(ndatm) == 8 and ndatm.isdigit() else ndatm
 
-                # التعديل الثاني: الاعتماد على رقم الكود لتصنيف الحركات في كشف الحساب
                 trx_code = str(getattr(r, "ncod1", "")).strip()
-                # 🛡️ الحماية الأولى: ضفنا str()
                 trx_name = str(trx_map.get(trx_code, trx_code) or "").strip()
-
-                # 🆕 استخراج ncod2 والبحث عن اسمه في القاموس
                 ncod2_val = str(getattr(r, "ncod2", "")).strip()
-
-                # 🛡️ الحماية الثانية الأهم: ضفنا str() هنا عشان ميديناش خطأ الـ float
                 doc_name = str(add_map.get(ncod2_val, "")).strip()
 
                 amt = float(getattr(r, "namt", 0.0))
                 amt_abs = abs(amt)
 
-                if trx_code in ("3", "4"):  # سحب أو خصم (مدين)
+                if trx_code in ("3", "4"):
                     credit, debit = 0.0, amt_abs
-                elif trx_code in ("1", "2"):  # إيداع أو إضافة (دائن)
+                elif trx_code in ("1", "2"):
                     credit, debit = amt_abs, 0.0
                 else:
-                    # حل احتياطي لو ظهر كود جديد غير معروف
                     credit, debit = (0.0, amt_abs) if amt < 0 else (amt_abs, 0.0)
 
                 rows_data.append({
@@ -3863,7 +3847,7 @@ class FGSApp(customtkinter.CTk):
                     'gl_main_name': acc_map.get(str(getattr(r, "ngl", "")).strip(), str(getattr(r, "ngl", "")).strip()),
                     'gl_sub': str(getattr(r, "nsb", "")).strip(),
                     'nseq': str(getattr(r, "nseq", "")).strip(),
-                    'doc_name': doc_name  # 🆕 إضافة اسم المستند للداتا
+                    'doc_name': doc_name
                 })
 
             rows_data.sort(key=lambda x: (
@@ -3872,14 +3856,12 @@ class FGSApp(customtkinter.CTk):
                 max(x['credit'], x['debit'])
             ))
 
-            # ✅ 3. تطبيق التدخل الجراحي جوه كشف الحساب بشكل مرئي
             running_balance = actual_opening_balance
             passed_cutoff = True if (date_from_val and date_from_val > '20160630') else False
 
-            final_rows_data = []  # لستة جديدة هنبني فيها الحركات
+            final_rows_data = []
 
             for item in rows_data:
-                # اللقطة: لو عدينا يوم 30-6، هنزرع سطر وهمي في كشف الحساب يوضح الرصيد الجديد
                 if not passed_cutoff and item['ndatm_raw'] > '20160630':
                     settlement_row = {
                         'ndatm_raw': '20160630',
@@ -3894,17 +3876,21 @@ class FGSApp(customtkinter.CTk):
                         'doc_name': '',
                         'balance': pbal_val
                     }
-                    final_rows_data.append(settlement_row)  # ضفنا سطر التسوية الأول
+                    final_rows_data.append(settlement_row)
                     running_balance = pbal_val
                     passed_cutoff = True
 
-                # بعدين نحسب الحركة الطبيعية بتاعتنا
                 running_balance += item['credit'] - item['debit']
+
+                # 🔥 تعديل تصفير المكشوف: لو الرصيد نزل بالسالب جوه كشف الحساب نفسه قبل 30-06-2016
+                if running_balance < 0 and item['ndatm_raw'] <= '20160630':
+                    running_balance = 0.0
+
                 item['balance'] = running_balance
                 final_rows_data.append(item)
 
             opening_balance = actual_opening_balance
-            rows_data = final_rows_data  # نحدث الداتا بتاعتنا بالداتا الجديدة اللي فيها سطر التسوية
+            rows_data = final_rows_data
 
             def fmt_money(x: float) -> str:
                 return f"{x:,.2f}" if x != 0.0 else ""
@@ -3921,7 +3907,7 @@ class FGSApp(customtkinter.CTk):
                     item['gl_main_name'],
                     item['gl_sub'],
                     item['nseq'],
-                    item['doc_name']  # Index [9]
+                    item['doc_name']
                 ])
 
             if not hasattr(self, "sheet"): return
