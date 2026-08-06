@@ -4,4 +4,4 @@ pyodbc
 openpyxl
 python-dotenv
 Pillow
-bidi
+python-bidi

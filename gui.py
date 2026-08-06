@@ -617,61 +617,589 @@ class FGSApp(customtkinter.CTk):
             if hasattr(self, 'load_rejected_cheques_data'):
                 self.load_rejected_cheques_data()
 
+
+    def stopped_cheques_fetch_data(self):
+        """جلب بيانات الشيكات الموقوفة بسرعة فائقة وتطبيق الـ Regex على الاسم"""
+        branch_val = self.cmb_stopped_branch.get().strip()
+        acc_num = self.ent_stopped_acc.get().strip()
+
+        if not branch_val or branch_val in ["جاري التحميل...", "- اختر الفرع -", "- لا توجد فروع -"]:
+            # تنبيه باختيار الفرع
+            return
+
+        if not acc_num:
+            # تنبيه بإدخال رقم الحساب
+            return
+
+        # استخراج كود الفرع من النص (على فرض المبدأ: "001 - اسم الفرع")
+        branch_code = branch_val.split(" - ")[0].strip() if " - " in branch_val else branch_val
+
+        # تشغيل البحث في Thread منفصل لعدم تجميد الواجهة
+        def _background_search():
+            try:
+                # افتح اتصالك بالداتا بيز (استخدم طريقة الاتصال المعتمدة لديك)
+                conn = self.get_db_connection()
+                cursor = conn.cursor()
+
+                # Query سريع جداً مع NOLOCK و N Prefix
+                sql_query = f"""
+                    SELECT 
+                        ISNULL(c.BCHNO, '') AS BCHNO,
+                        ISNULL(c.BDAT, '') AS BDAT,
+                        ISNULL(c.BDAT1, '') AS BDAT1,
+                        ISNULL(c.BCOD, '') AS BCOD,
+                        ISNULL(cl.BNAME, N'غير محدد') AS BNAME
+                    FROM [FIBTest].[dbo].[TBL_cheques] c WITH (NOLOCK)
+                    LEFT JOIN [FIBTest].[dbo].[TBL_client_name] cl WITH (NOLOCK)
+                        ON c.BCLNT = cl.BCLNT
+                    WHERE c.BCHBR = N'{branch_code}' 
+                      AND c.BCLNT = N'{acc_num}'
+                """
+
+                cursor.execute(sql_query)
+                rows = cursor.fetchall()
+                conn.close()
+
+                formatted_data = []
+                for row in rows:
+                    bchno = str(row[0]).strip()
+                    bdat = str(row[1]).strip()
+                    bdat1 = str(row[2]).strip()
+                    bcod = str(row[3]).strip()
+                    raw_bname = str(row[4]).strip()
+
+                    # --- تطهير وتنظيف الاسم بالـ Regex ---
+                    # إزالة الأرقام والرموز والمسافات الزائدة والحفاظ على الحروف العربية فقط
+                    clean_bname = re.sub(r'[^\u0600-\u06FF\s]', '', raw_bname)
+                    clean_bname = re.sub(r'\s+', ' ', clean_bname).strip()
+                    if not clean_bname:
+                        clean_bname = raw_bname
+
+                    # ترتيب الصف للجدول: [رقم الشيك, تاريخ الإيقاف, تاريخ الإلغاء, كود الإيقاف, اسم العميل]
+                    formatted_data.append([bchno, bdat, bdat1, bcod, clean_bname])
+
+                # تحديث الـ tksheet في الواجهة الرئيسية
+                self.after(0, lambda: self._update_stopped_sheet(formatted_data))
+
+            except Exception as e:
+                print(f"Error fetching stopped cheques: {e}")
+
+        threading.Thread(target=_background_search, daemon=True).start()
+
+    def _update_stopped_sheet(self, data):
+        """تحديث جدول الشيكات الموقوفة"""
+        if hasattr(self, 'stopped_sheet'):
+            try:
+                self.stopped_sheet.set_sheet_data(data, reset_col_positions=False, reset_row_positions=True)
+            except Exception as e:
+                print(f"Sheet update error: {e}")
+
     def setup_stopped_cheques_ui(self, parent):
-        """واجهة الشيكات الموقوفة"""
-        # Header
-        head = ctk.CTkFrame(parent, fg_color="transparent")
-        head.pack(fill="x", pady=(0, 15))
-        ctk.CTkLabel(head, text="استعلام الشيكات الموقوفة", font=("Segoe UI", 22, "bold"), text_color=FIB_GREEN).pack(
-            anchor="e")
+        import pandas as pd
+        import customtkinter as ctk
+        from tkinter import messagebox
+        import threading
+        import logging
 
-        # Filter / Search Area
-        search_frame = ctk.CTkFrame(parent, fg_color=COLOR_WHITE, corner_radius=10)
-        search_frame.pack(fill="x", pady=(0, 15), padx=5)
+        # =========================================
+        # 🎨 1. Premium Theme Colors
+        # =========================================
+        FIB_GREEN = "#005C34"
+        FIB_GOLD = "#C5A059"
+        BG_MAIN = "#F8FAFC"
+        CARD_BG = "#FFFFFF"
+        BOX_BG = "#F1F5F9"
+        TEXT_DARK = "#0F172A"
+        TEXT_MUTED = "#64748B"
+        STOP_COLOR = "#B45309"  # لون برتقالي/بني مميز للموقوفة
 
-        ctk.CTkEntry(search_frame, placeholder_text="ابحث برقم الشيك أو الحساب...", width=300).pack(side="right",
-                                                                                                    padx=15, pady=15)
-        ctk.CTkButton(search_frame, text="🔍 بحث", fg_color=FIB_GREEN, width=100).pack(side="right", padx=5)
+        # حاوية الشاشة الرئيسية
+        main_container = ctk.CTkFrame(parent, fg_color=BG_MAIN)
+        main_container.pack(fill="both", expand=True)
 
-        # Table Area
-        cols = ("رقم الشيك", "رقم الحساب", "اسم العميل", "المبلغ", "تاريخ الإيقاف", "سبب الإيقاف")
-        tree = ttk.Treeview(parent, columns=cols, show="headings", height=15)
-        self.style_treeview()
+        # الهيدر العلوي
+        header = ctk.CTkFrame(main_container, fg_color=FIB_GREEN, height=65, corner_radius=0)
+        header.pack(fill="x")
+        header.pack_propagate(False)
 
-        for c in cols:
-            tree.heading(c, text=c)
-            tree.column(c, anchor="center", width=120)
+        ctk.CTkFrame(main_container, fg_color=FIB_GOLD, height=4, corner_radius=0).pack(fill="x")
 
-        tree.pack(fill="both", expand=True, padx=5, pady=5)
-        setattr(self, 'stopped_cheques_tree', tree)
+        title_lbl = ctk.CTkLabel(header, text="استعلام الشيكات الموقوفة", font=("Segoe UI", 22, "bold"),
+                                 text_color=CARD_BG)
+        title_lbl.pack(side="right", padx=30, pady=15)
 
+        # =========================================
+        # 🔍 2. Search Area (الفرع ورقم الحساب)
+        # =========================================
+        search_frame = ctk.CTkFrame(main_container, fg_color=CARD_BG, corner_radius=15, border_width=1,
+                                    border_color="#E2E8F0")
+        search_frame.pack(fill="x", padx=20, pady=20)
+
+        search_inner = ctk.CTkFrame(search_frame, fg_color="transparent")
+        search_inner.pack(side="right", fill="y", padx=20, pady=15)
+
+        # --- زر البحث ---
+        btn_search = ctk.CTkButton(search_inner, text="🔍 بحث", font=("Segoe UI", 15, "bold"),
+                                   fg_color=FIB_GREEN, hover_color="#004426", text_color="white",
+                                   width=120, height=40, corner_radius=8, command=lambda: execute_search())
+        btn_search.pack(side="left", padx=10)
+
+        # --- رقم الحساب ---
+        self.ent_stopped_acc = ctk.CTkEntry(search_inner, font=("Segoe UI", 15, "bold"),
+                                            justify="center", placeholder_text="رقم الحساب...",
+                                            width=200, height=40, border_color="#CBD5E1")
+        self.ent_stopped_acc.pack(side="left", padx=10)
+
+        ctk.CTkLabel(search_inner, text="رقم الحساب:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(
+            side="left", padx=(10, 2))
+
+        # --- قائمة الفروع ---
+        if hasattr(self, '_create_premium_select'):
+            self.cmb_stopped_branch_box, self.cmb_stopped_branch = self._create_premium_select(
+                search_inner,
+                values=["جاري التحميل..."],
+                default="جاري التحميل...",
+                title="اختر الفرع"
+            )
+            self.cmb_stopped_branch_box.pack(side="left", padx=10)
+        else:
+            self.cmb_stopped_branch = ctk.CTkComboBox(search_inner, font=("Segoe UI", 14, "bold"), justify="right",
+                                                      width=250, height=40, border_color="#CBD5E1")
+            self.cmb_stopped_branch.pack(side="left", padx=10)
+
+        ctk.CTkLabel(search_inner, text="الفرع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left",
+                                                                                                            padx=(10,
+                                                                                                                  2))
+
+        # 🔥 الحل الجذري لمشكلة عدم تحميل الفروع:
+        def load_branches_to_combo():
+            if hasattr(self, 'branch_mapping') and self.branch_mapping:
+                # لو الفروع اتحملت، نعرضها فوراً
+                branches = list(self.branch_mapping.keys())
+                self.cmb_stopped_branch.configure(values=branches)
+                self.cmb_stopped_branch.set(branches[0])
+            else:
+                # لو لسة، نطلب تحميلها ونشغل الدالة دي تاني بعد نص ثانية (500ms) تتأكد
+                if hasattr(self, 'nuwairy_load_branches'):
+                    self.nuwairy_load_branches()
+                self.after(500, load_branches_to_combo)
+
+        # استدعاء تعبئة الفروع
+        load_branches_to_combo()
+
+        # ربط زر الـ Enter بالبحث
+        self.ent_stopped_acc.bind("<Return>", lambda event: execute_search())
+
+        # =========================================
+        # 📜 3. Results Area (كروت الشيكات)
+        # =========================================
+        self.stopped_results_scroll = ctk.CTkScrollableFrame(main_container, fg_color="transparent")
+        self.stopped_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
+
+        def fix_arabic_name(raw_name):
+            import re
+            if pd.isna(raw_name) or not str(raw_name).strip():
+                return "غير مسجل"
+            text = str(raw_name).strip()
+            text = re.sub(r'\s+(يه|ية|ه|ة)\b', r'\1', text)
+            previous_text = ""
+            while text != previous_text:
+                previous_text = text
+                text = re.sub(r'([ةىء])([\u0621-\u064A])', r'\1 \2', text)
+                text = re.sub(r'([\u0621-\u064A]{2,})((?:ب|ك|ف|و)?ال[\u0621-\u064A]{2,})', r'\1 \2', text)
+                for p in ['عبد', 'ابو', 'أبو', 'ام', 'أم', 'بن', 'بنت', 'ذو', 'ذي']:
+                    text = re.sub(f'(?<![\u0621-\u064A])({p})(?=[\u0621-\u064A])', r'\1 ', text)
+                for s in ['الدين', 'مخمد', 'الله', 'الاسلام', 'الإسلام', 'الحق']:
+                    text = re.sub(f'(?<=[\u0621-\u064A])({s})(?![\u0621-\u064A])', r' \1', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+            return text
+
+        # =========================================
+        # ⚙️ 4. Search Engine Logic
+        # =========================================
+        def execute_search():
+            branch_name = self.cmb_stopped_branch.get()
+            acc_num = self.ent_stopped_acc.get().strip()
+
+            if not acc_num:
+                messagebox.showwarning("تنبيه", "يرجى إدخال رقم الحساب أولاً")
+                self.ent_stopped_acc.focus()
+                return
+
+            if not hasattr(self, 'branch_mapping') or branch_name not in self.branch_mapping:
+                messagebox.showerror("خطأ", "برجاء اختيار فرع صحيح")
+                return
+
+            branch_code = self.branch_mapping[branch_name]
+
+            for widget in self.stopped_results_scroll.winfo_children():
+                widget.destroy()
+
+            lbl_loading = ctk.CTkLabel(self.stopped_results_scroll, text="⚡ جاري البحث في قاعدة البيانات...",
+                                       font=("Segoe UI", 16, "bold"), text_color=FIB_GOLD)
+            lbl_loading.pack(pady=50)
+
+            def fetch_data():
+                try:
+                    engine = getattr(self, '_get_db_connection', lambda: None)()
+                    if not engine:
+                        raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
+
+                    # الكويري السريع المخصص للشيكات الموقوفة
+                    sql = f"""
+                            SELECT 
+                                c.BCHNO, c.BDAT, c.BDAT1, c.BCOD,
+                                cl.BNAME
+                            FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
+                            LEFT JOIN [dbo].[TBL_client_name] AS cl WITH (NOLOCK) 
+                                ON c.BCLNT = cl.BCLNT
+                            WHERE c.BCHBR = N'{branch_code}' AND c.BCLNT = N'{acc_num}'
+                        """
+                    df = pd.read_sql(sql, engine)
+
+                    self.after(0, lambda: update_results_ui(df))
+                except Exception as e:
+                    logging.error(f"Error fetching stopped cheques: {e}")
+                    self.after(0, lambda: update_results_ui(pd.DataFrame(), error=str(e)))
+
+            threading.Thread(target=fetch_data, daemon=True).start()
+
+        def update_results_ui(df, error=None):
+            for widget in self.stopped_results_scroll.winfo_children():
+                widget.destroy()
+
+            if error:
+                ctk.CTkLabel(self.stopped_results_scroll, text=f"❌ حدث خطأ أثناء البحث:\n{error}",
+                             font=("Segoe UI", 14, "bold"), text_color="#EF4444").pack(pady=40)
+                return
+
+            if df.empty:
+                ctk.CTkLabel(self.stopped_results_scroll, text="🔍 لا توجد شيكات موقوفة لهذا الحساب في هذا الفرع",
+                             font=("Segoe UI", 18, "bold"), text_color=TEXT_MUTED).pack(pady=60)
+                return
+
+            # إنشاء كارت مخصص لكل شيك
+            for _, row in df.iterrows():
+                chq_no = str(row['BCHNO']).replace('.0', '') if pd.notna(row['BCHNO']) else "غير معروف"
+                stop_code = str(row['BCOD']).replace('.0', '') if pd.notna(row['BCOD']) else "—"
+                cust_name = fix_arabic_name(row['BNAME'])
+
+                stop_date = str(row['BDAT']).split()[0] if pd.notna(row['BDAT']) and str(row['BDAT']).strip() else "—"
+                cancel_date = str(row['BDAT1']).split()[0] if pd.notna(row['BDAT1']) and str(
+                    row['BDAT1']).strip() else "—"
+
+                card = ctk.CTkFrame(self.stopped_results_scroll, fg_color=CARD_BG, corner_radius=12,
+                                    border_width=1, border_color="#E2E8F0")
+                card.pack(fill="x", padx=10, pady=8)
+
+                ctk.CTkFrame(card, fg_color=STOP_COLOR, width=5, corner_radius=0).pack(side="right", fill="y", pady=10)
+
+                card_content = ctk.CTkFrame(card, fg_color="transparent")
+                card_content.pack(fill="both", expand=True, padx=20, pady=15)
+
+                # صف العنوان
+                header_row = ctk.CTkFrame(card_content, fg_color="transparent")
+                header_row.pack(fill="x", pady=(0, 5))
+
+                ctk.CTkLabel(header_row, text=f"شيك رقم : {chq_no} 🧾", font=("Segoe UI", 18, "bold"),
+                             text_color=FIB_GREEN).pack(side="right")
+                ctk.CTkLabel(header_row, text=f"كود الإيقاف/الإلغاء: {stop_code} 🛑", font=("Segoe UI", 14, "bold"),
+                             text_color="#B45309", fg_color="#FEF3C7", corner_radius=6).pack(side="left", ipadx=10,
+                                                                                             ipady=2)
+
+                # صف اسم العميل
+                name_row = ctk.CTkFrame(card_content, fg_color="transparent")
+                name_row.pack(fill="x", pady=(0, 10))
+                ctk.CTkLabel(name_row, text=f"العميل: {cust_name} 👤", font=("Segoe UI", 15, "bold"),
+                             text_color=TEXT_MUTED).pack(side="right")
+
+                # خط فاصل
+                ctk.CTkFrame(card_content, fg_color="#F1F5F9", height=2).pack(fill="x", pady=5)
+
+                # صف التواريخ (مقسم لنصفين)
+                data_grid = ctk.CTkFrame(card_content, fg_color="transparent")
+                data_grid.pack(fill="x", pady=10)
+                data_grid.grid_columnconfigure((0, 1), weight=1)
+
+                def create_info_box(parent, row_idx, col_idx, title, value, val_color=TEXT_DARK):
+                    box = ctk.CTkFrame(parent, fg_color=BOX_BG, corner_radius=8)
+                    box.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="ew")
+                    ctk.CTkLabel(box, text=title, font=("Segoe UI", 12, "bold"), text_color=TEXT_MUTED).pack(
+                        anchor="center", pady=(5, 0))
+                    ctk.CTkLabel(box, text=value, font=("Segoe UI", 15, "bold"), text_color=val_color).pack(
+                        anchor="center", pady=(0, 5))
+
+                create_info_box(data_grid, 0, 1, "تاريخ الإيقاف", stop_date, val_color=STOP_COLOR)
+                create_info_box(data_grid, 0, 0, "تاريخ الإلغاء", cancel_date, val_color=FIB_GREEN)
     def setup_rejected_cheques_ui(self, parent):
-        """واجهة الشيكات المرفوضة"""
-        # Header
-        head = ctk.CTkFrame(parent, fg_color="transparent")
-        head.pack(fill="x", pady=(0, 15))
-        ctk.CTkLabel(head, text="استعلام الشيكات المرفوضة", font=("Segoe UI", 22, "bold"), text_color=FIB_GREEN).pack(
-            anchor="e")
 
-        # Filter / Search Area
-        search_frame = ctk.CTkFrame(parent, fg_color=COLOR_WHITE, corner_radius=10)
-        search_frame.pack(fill="x", pady=(0, 15), padx=5)
+        # =========================================
+        # 🎨 1. Premium Theme Colors
+        # =========================================
+        FIB_GREEN = "#005C34"
+        FIB_GOLD = "#C5A059"
+        BG_MAIN = "#F8FAFC"
+        CARD_BG = "#FFFFFF"
+        BOX_BG = "#F1F5F9"
+        TEXT_DARK = "#0F172A"
+        TEXT_MUTED = "#64748B"
 
-        ctk.CTkEntry(search_frame, placeholder_text="ابحث برقم الشيك أو الحساب...", width=300).pack(side="right",
-                                                                                                    padx=15, pady=15)
-        ctk.CTkButton(search_frame, text="🔍 بحث", fg_color=FIB_GREEN, width=100).pack(side="right", padx=5)
+        # حاوية الشاشة الرئيسية
+        main_container = ctk.CTkFrame(parent, fg_color=BG_MAIN)
+        main_container.pack(fill="both", expand=True)
 
-        # Table Area
-        cols = ("رقم الشيك", "رقم الحساب", "اسم العميل", "المبلغ", "تاريخ الرفض", "سبب الرفض", "البنك المقدم")
-        tree = ttk.Treeview(parent, columns=cols, show="headings", height=15)
-        self.style_treeview()
+        # الهيدر العلوي
+        header = ctk.CTkFrame(main_container, fg_color=FIB_GREEN, height=65, corner_radius=0)
+        header.pack(fill="x")
+        header.pack_propagate(False)
 
-        for c in cols:
-            tree.heading(c, text=c)
-            tree.column(c, anchor="center", width=120)
+        ctk.CTkFrame(main_container, fg_color=FIB_GOLD, height=4, corner_radius=0).pack(fill="x")
 
-        tree.pack(fill="both", expand=True, padx=5, pady=5)
-        setattr(self, 'rejected_cheques_tree', tree)
+        title_lbl = ctk.CTkLabel(header, text="استعلام الشيكات المرفوضة", font=("Segoe UI", 22, "bold"),
+                                 text_color=CARD_BG)
+        title_lbl.pack(side="right", padx=30, pady=15)
+
+        # =========================================
+        # 🔍 2. Search Area (الفرع ورقم الحساب)
+        # =========================================
+        search_frame = ctk.CTkFrame(main_container, fg_color=CARD_BG, corner_radius=15, border_width=1, border_color="#E2E8F0")
+        search_frame.pack(fill="x", padx=20, pady=20)
+
+        # تفريغ منطقة البحث وجعل العناصر تصطف من اليمين لليسار
+        search_inner = ctk.CTkFrame(search_frame, fg_color="transparent")
+        search_inner.pack(side="right", fill="y", padx=20, pady=15)
+
+        # --- زر البحث ---
+        btn_search = ctk.CTkButton(search_inner, text="🔍 بحث", font=("Segoe UI", 15, "bold"),
+                                   fg_color=FIB_GREEN, hover_color="#004426", text_color="white",
+                                   width=120, height=40, corner_radius=8, command=lambda: execute_search())
+        btn_search.pack(side="left", padx=10)
+
+        # --- رقم الحساب ---
+        self.ent_rej_acc = ctk.CTkEntry(search_inner, font=("Segoe UI", 15, "bold"),
+                                        justify="center", placeholder_text="رقم الحساب...",
+                                        width=200, height=40, border_color="#CBD5E1")
+        self.ent_rej_acc.pack(side="left", padx=10)
+
+        ctk.CTkLabel(search_inner, text="رقم الحساب:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left", padx=(10, 2))
+
+        # --- قائمة الفروع ---
+        # --- قائمة الفروع بالمركب البريميوم ---
+        if hasattr(self, '_create_premium_select'):
+            self.cmb_rej_branch_box, self.cmb_rej_branch = self._create_premium_select(
+                search_inner,
+                values=["جاري التحميل..."],
+                default="جاري التحميل...",
+                title="اختر الفرع"
+            )
+            self.cmb_rej_branch_box.pack(side="left", padx=10)
+        else:
+            # احتياطي في حال عدم وجود الدالة المساعدة
+            self.cmb_rej_branch = ctk.CTkComboBox(search_inner, font=("Segoe UI", 14, "bold"), justify="right",
+                                                  width=250, height=40, border_color="#CBD5E1")
+            self.cmb_rej_branch.pack(side="left", padx=10)
+
+        ctk.CTkLabel(search_inner, text="الفرع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left",
+                                                                                                            padx=(10,
+                                                                                                                  2))
+        # تعبئة الفروع (بالاعتماد على دالتك nuwairy_load_branches)
+        def load_branches_to_combo():
+            if not hasattr(self, 'branch_mapping') or not self.branch_mapping:
+                # لو لم يتم تحميل الفروع، استدعِ الدالة الخاصة بك
+                if hasattr(self, 'nuwairy_load_branches'):
+                    self.nuwairy_load_branches()
+
+            if hasattr(self, 'branch_mapping') and self.branch_mapping:
+                branches = list(self.branch_mapping.keys())
+                self.cmb_rej_branch.configure(values=branches)
+                self.cmb_rej_branch.set(branches[0])
+            else:
+                self.cmb_rej_branch.configure(values=["- لا توجد فروع -"])
+                self.cmb_rej_branch.set("- لا توجد فروع -")
+
+        # استدعاء تعبئة الفروع
+        load_branches_to_combo()
+
+        # ربط زر الـ Enter بالبحث
+        self.ent_rej_acc.bind("<Return>", lambda event: execute_search())
+
+        # =========================================
+        # 📜 3. Results Area (كروت الشيكات)
+        # =========================================
+        self.rej_results_scroll = ctk.CTkScrollableFrame(main_container, fg_color="transparent")
+        self.rej_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
+
+        def fix_arabic_name(raw_name):
+            import re
+            import pandas as pd
+
+            if pd.isna(raw_name) or not str(raw_name).strip():
+                return "غير مسجل"
+
+            text = str(raw_name).strip()
+
+            # 1. إصلاح المسافات الخاطئة قبل النهايات (مثل: الاسلام يه -> الاسلاميه)
+            text = re.sub(r'\s+(يه|ية|ه|ة)\b', r'\1', text)
+
+            previous_text = ""
+            while text != previous_text:
+                previous_text = text
+
+                # 2. فصل الحروف التي لا تتصل بما بعدها (ة، ى، ء) إذا جاء بعدها حرف
+                # مثال: الدولىللبنوك -> الدولى للبنوك
+                text = re.sub(r'([ةىء])([\u0621-\u064A])', r'\1 \2', text)
+
+                # 3. فصل أي كلمة تلتصق بـ "ال" المعرفة
+                # مثال: الاتحادالدولى -> الاتحاد الدولى
+                text = re.sub(r'([\u0621-\u064A]{2,})((?:ب|ك|ف|و)?ال[\u0621-\u064A]{2,})', r'\1 \2', text)
+
+                # 4. فصل الأسماء المركبة المشهورة (السوابق)
+                prefixes = ['عبد', 'ابو', 'أبو', 'ام', 'أم', 'بن', 'بنت', 'ذو', 'ذي']
+                for p in prefixes:
+                    text = re.sub(f'(?<![\u0621-\u064A])({p})(?=[\u0621-\u064A])', r'\1 ', text)
+
+                # 5. فصل الأسماء المركبة المشهورة (اللواحق)
+                suffixes = ['الدين','مخمد', 'الله', 'الاسلام', 'الإسلام', 'الحق']
+                for s in suffixes:
+                    text = re.sub(f'(?<=[\u0621-\u064A])({s})(?![\u0621-\u064A])', r' \1', text)
+
+                # 6. تنظيف المسافات الزائدة
+                text = re.sub(r'\s+', ' ', text).strip()
+
+            return text
+        # =========================================
+        # ⚙️ 4. Search Engine Logic (التكملة)
+        # =========================================
+        def execute_search():
+            branch_name = self.cmb_rej_branch.get()
+            acc_num = self.ent_rej_acc.get().strip()
+
+            if not acc_num:
+                messagebox.showwarning("تنبيه", "يرجى إدخال رقم الحساب أولاً")
+                self.ent_rej_acc.focus()
+                return
+
+            if not hasattr(self, 'branch_mapping') or branch_name not in self.branch_mapping:
+                messagebox.showerror("خطأ", "برجاء اختيار فرع صحيح")
+                return
+
+            # جلب رقم الفرع (MBR) من الـ Mapping
+            branch_code = self.branch_mapping[branch_name]
+
+            # تنظيف الشاشة قبل البحث
+            for widget in self.rej_results_scroll.winfo_children():
+                widget.destroy()
+
+            lbl_loading = ctk.CTkLabel(self.rej_results_scroll, text="⚡ جاري البحث في قاعدة البيانات...",
+                                       font=("Segoe UI", 16, "bold"), text_color=FIB_GOLD)
+            lbl_loading.pack(pady=50)
+
+            def fetch_data():
+                try:
+                    engine = self._get_db_connection()
+
+                    # 🔥 التعديل الأول: عملنا JOIN عشان نجيب BNAME من TBL_client_name
+                    sql = f"""
+                            SELECT 
+                                c.MCHNO, c.MAMT1, c.MDAT1, c.MDAT2, c.MCOD, c.MBAL,
+                                cl.BNAME
+                            FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
+                            LEFT JOIN [dbo].[TBL_client_name] AS cl WITH (NOLOCK) 
+                                ON c.MCLNT = cl.BCLNT
+                            WHERE c.MBR = N'{branch_code}' AND c.MCLNT = N'{acc_num}'
+                        """
+                    df = pd.read_sql(sql, engine)
+
+                    self.after(0, lambda: update_results_ui(df))
+                except Exception as e:
+                    logging.error(f"Error fetching rejected cheques: {e}")
+                    self.after(0, lambda: update_results_ui(pd.DataFrame(), error=str(e)))
+
+            threading.Thread(target=fetch_data, daemon=True).start()
+
+        def update_results_ui(df, error=None):
+            for widget in self.rej_results_scroll.winfo_children():
+                widget.destroy()
+
+            if error:
+                ctk.CTkLabel(self.rej_results_scroll, text=f"❌ حدث خطأ أثناء البحث:\n{error}",
+                             font=("Segoe UI", 14, "bold"), text_color="#EF4444").pack(pady=40)
+                return
+
+            if df.empty:
+                ctk.CTkLabel(self.rej_results_scroll, text="🔍 لا توجد شيكات مرفوضة لهذا الحساب في هذا الفرع",
+                             font=("Segoe UI", 18, "bold"), text_color=TEXT_MUTED).pack(pady=60)
+                return
+
+            # إنشاء كارت مخصص لكل شيك
+            for _, row in df.iterrows():
+                # معالجة البيانات
+                chq_no = str(row['MCHNO']).replace('.0', '') if pd.notna(row['MCHNO']) else "غير معروف"
+                reject_code = str(row['MCOD']).replace('.0', '') if pd.notna(row['MCOD']) else "—"
+
+                # 🔥 التعديل الثاني: استخراج اسم العميل
+                cust_name = fix_arabic_name(row['BNAME'])
+
+                # تنسيق المبالغ المالية
+                try:
+                    amount = f"{float(row['MAMT1']):,.2f}" if pd.notna(row['MAMT1']) else "0.00"
+                    balance = f"{float(row['MBAL']):,.2f}" if pd.notna(row['MBAL']) else "0.00"
+                except:
+                    amount = str(row['MAMT1'])
+                    balance = str(row['MBAL'])
+
+                # تنسيق التواريخ
+                rej_date = str(row['MDAT1']).split()[0] if pd.notna(row['MDAT1']) else "—"
+                due_date = str(row['MDAT2']).split()[0] if pd.notna(row['MDAT2']) else "—"
+
+                # بناء الكارت
+                card = ctk.CTkFrame(self.rej_results_scroll, fg_color=CARD_BG, corner_radius=12,
+                                    border_width=1, border_color="#E2E8F0")
+                card.pack(fill="x", padx=10, pady=8)
+
+                # الخط الذهبي الجانبي
+                ctk.CTkFrame(card, fg_color=FIB_GOLD, width=5, corner_radius=0).pack(side="right", fill="y", pady=10)
+
+                card_content = ctk.CTkFrame(card, fg_color="transparent")
+                card_content.pack(fill="both", expand=True, padx=20, pady=15)
+
+                # صف العنوان (رقم الشيك وكود الرفض)
+                header_row = ctk.CTkFrame(card_content, fg_color="transparent")
+                header_row.pack(fill="x", pady=(0, 5))
+
+                ctk.CTkLabel(header_row, text=f"شيك رقم : {chq_no} 🧾", font=("Segoe UI", 18, "bold"),
+                             text_color=FIB_GREEN).pack(side="right")
+                ctk.CTkLabel(header_row, text=f"كود الرفض: {reject_code} ⛔", font=("Segoe UI", 14, "bold"),
+                             text_color="#EF4444", fg_color="#FEE2E2", corner_radius=6).pack(side="left", ipadx=10,
+                                                                                             ipady=2)
+
+                # 🔥 التعديل الثالث: صف جديد لاسم العميل
+                name_row = ctk.CTkFrame(card_content, fg_color="transparent")
+                name_row.pack(fill="x", pady=(0, 10))
+                ctk.CTkLabel(name_row, text=f"العميل: {cust_name} 👤", font=("Segoe UI", 15, "bold"),
+                             text_color=TEXT_MUTED).pack(side="right")
+
+                # خط فاصل
+                ctk.CTkFrame(card_content, fg_color="#F1F5F9", height=2).pack(fill="x", pady=5)
+
+                # صف الداتا (مقسم لـ 4 أجزاء بشكل أنيق)
+                data_grid = ctk.CTkFrame(card_content, fg_color="transparent")
+                data_grid.pack(fill="x", pady=10)
+                data_grid.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+                def create_info_box(parent, row_idx, col_idx, title, value, val_color=TEXT_DARK):
+                    box = ctk.CTkFrame(parent, fg_color=BOX_BG, corner_radius=8)
+                    box.grid(row=row_idx, column=col_idx, padx=5, pady=5, sticky="ew")
+                    ctk.CTkLabel(box, text=title, font=("Segoe UI", 12, "bold"), text_color=TEXT_MUTED).pack(
+                        anchor="center", pady=(5, 0))
+                    ctk.CTkLabel(box, text=value, font=("Segoe UI", 15, "bold"), text_color=val_color).pack(
+                        anchor="center", pady=(0, 5))
+
+                # ترتيب العناصر من اليمين لليسار في الجريد
+                create_info_box(data_grid, 0, 3, "مبلغ الشيك", f"{amount} EGP", val_color=FIB_GREEN)
+                create_info_box(data_grid, 0, 2, "تاريخ الاستحقاق", due_date)
+                create_info_box(data_grid, 0, 1, "تاريخ الرفض", rej_date, val_color="#EF4444")
+                create_info_box(data_grid, 0, 0, "رصيد الحساب", f"{balance} EGP", val_color=TEXT_DARK)
     def setup_dashboard_ui(self, parent):
         # Header
         head = ctk.CTkFrame(parent, fg_color="transparent")
@@ -2653,11 +3181,6 @@ class FGSApp(customtkinter.CTk):
             self.cust_fields["FULL_ADDRESS"].configure(text=morphological_unglue_arabic(full_address))
 
         self.ent_cust_search.bind("<KeyRelease>", on_search_change)
-
-
-
-
-
 
 
 
