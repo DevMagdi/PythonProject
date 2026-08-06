@@ -371,8 +371,14 @@ class FGSApp(customtkinter.CTk):
                 ("أستاذ الحسابات العام", "gl_inquiry"),
             ],
             "👥 شؤون العملاء": [
-               # ("بحث عن عميل", "customer"),
+                ("بحث عن عميل", "customer"),
+            ],
+            # ▼ ▼ ▼ الجزء الجديد اللي هيتم إضافته ▼ ▼ ▼
+            "📄 الشيكات": [
+                ("الشيكات الموقوفة", "stopped_cheques"),
+                ("الشيكات المرفوضة", "rejected_cheques"),
             ]
+
         }
 
         for category, items in menu_structure.items():
@@ -533,8 +539,14 @@ class FGSApp(customtkinter.CTk):
         self.setup_gl_inquiry_ui(self.page_gl_inquiry)
 
         self.page_customer = ctk.CTkFrame(self.content_area, fg_color="transparent")
-        #self.setup_customer_inquiry_ui(self.page_customer)
+        self.setup_customer_inquiry_ui(self.page_customer)
+        # 4. شاشة الشيكات الموقوفة
+        self.page_stopped_cheques = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self.setup_stopped_cheques_ui(self.page_stopped_cheques)
 
+        # 5. شاشة الشيكات المرفوضة
+        self.page_rejected_cheques = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self.setup_rejected_cheques_ui(self.page_rejected_cheques)
     def show_page(self, name):
         if hasattr(self, 'sys_logger'):
             self.sys_logger.log(f"🔄 المستخدم انتقل إلى شاشة: {name}")
@@ -543,7 +555,9 @@ class FGSApp(customtkinter.CTk):
         pages_to_hide = [
             getattr(self, 'page_nuwairy', None),
             getattr(self, 'page_gl_inquiry', None),
-            getattr(self, 'page_customer', None)
+            getattr(self, 'page_customer', None),
+            getattr(self, 'page_stopped_cheques', None),
+            getattr(self, 'page_rejected_cheques', None)
         ]
         for p in pages_to_hide:
             if p is not None:
@@ -553,7 +567,9 @@ class FGSApp(customtkinter.CTk):
         buttons_to_reset = [
             getattr(self, 'btn_nuwairy', None),
             getattr(self, 'btn_gl_inquiry', None),
-            getattr(self, 'btn_customer', None)
+            getattr(self, 'btn_customer', None),
+            getattr(self, 'btn_stopped_cheques', None),
+            getattr(self, 'btn_rejected_cheques', None)
         ]
         for b in buttons_to_reset:
             if b is not None:
@@ -585,11 +601,77 @@ class FGSApp(customtkinter.CTk):
                 self.page_customer.pack(fill="both", expand=True)
             if hasattr(self, 'btn_customer'):
                 self.btn_customer.configure(fg_color=FIB_GREEN, text_color="white")
+        elif name == "stopped_cheques":
+            if hasattr(self, 'page_stopped_cheques'):
+                self.page_stopped_cheques.pack(fill="both", expand=True)
+            if hasattr(self, 'btn_stopped_cheques'):
+                self.btn_stopped_cheques.configure(fg_color=FIB_GREEN, text_color="white")
+            if hasattr(self, 'load_stopped_cheques_data'):
+                self.load_stopped_cheques_data()
 
+        elif name == "rejected_cheques":
+            if hasattr(self, 'page_rejected_cheques'):
+                self.page_rejected_cheques.pack(fill="both", expand=True)
+            if hasattr(self, 'btn_rejected_cheques'):
+                self.btn_rejected_cheques.configure(fg_color=FIB_GREEN, text_color="white")
+            if hasattr(self, 'load_rejected_cheques_data'):
+                self.load_rejected_cheques_data()
 
+    def setup_stopped_cheques_ui(self, parent):
+        """واجهة الشيكات الموقوفة"""
+        # Header
+        head = ctk.CTkFrame(parent, fg_color="transparent")
+        head.pack(fill="x", pady=(0, 15))
+        ctk.CTkLabel(head, text="استعلام الشيكات الموقوفة", font=("Segoe UI", 22, "bold"), text_color=FIB_GREEN).pack(
+            anchor="e")
 
+        # Filter / Search Area
+        search_frame = ctk.CTkFrame(parent, fg_color=COLOR_WHITE, corner_radius=10)
+        search_frame.pack(fill="x", pady=(0, 15), padx=5)
 
+        ctk.CTkEntry(search_frame, placeholder_text="ابحث برقم الشيك أو الحساب...", width=300).pack(side="right",
+                                                                                                    padx=15, pady=15)
+        ctk.CTkButton(search_frame, text="🔍 بحث", fg_color=FIB_GREEN, width=100).pack(side="right", padx=5)
 
+        # Table Area
+        cols = ("رقم الشيك", "رقم الحساب", "اسم العميل", "المبلغ", "تاريخ الإيقاف", "سبب الإيقاف")
+        tree = ttk.Treeview(parent, columns=cols, show="headings", height=15)
+        self.style_treeview()
+
+        for c in cols:
+            tree.heading(c, text=c)
+            tree.column(c, anchor="center", width=120)
+
+        tree.pack(fill="both", expand=True, padx=5, pady=5)
+        setattr(self, 'stopped_cheques_tree', tree)
+
+    def setup_rejected_cheques_ui(self, parent):
+        """واجهة الشيكات المرفوضة"""
+        # Header
+        head = ctk.CTkFrame(parent, fg_color="transparent")
+        head.pack(fill="x", pady=(0, 15))
+        ctk.CTkLabel(head, text="استعلام الشيكات المرفوضة", font=("Segoe UI", 22, "bold"), text_color=FIB_GREEN).pack(
+            anchor="e")
+
+        # Filter / Search Area
+        search_frame = ctk.CTkFrame(parent, fg_color=COLOR_WHITE, corner_radius=10)
+        search_frame.pack(fill="x", pady=(0, 15), padx=5)
+
+        ctk.CTkEntry(search_frame, placeholder_text="ابحث برقم الشيك أو الحساب...", width=300).pack(side="right",
+                                                                                                    padx=15, pady=15)
+        ctk.CTkButton(search_frame, text="🔍 بحث", fg_color=FIB_GREEN, width=100).pack(side="right", padx=5)
+
+        # Table Area
+        cols = ("رقم الشيك", "رقم الحساب", "اسم العميل", "المبلغ", "تاريخ الرفض", "سبب الرفض", "البنك المقدم")
+        tree = ttk.Treeview(parent, columns=cols, show="headings", height=15)
+        self.style_treeview()
+
+        for c in cols:
+            tree.heading(c, text=c)
+            tree.column(c, anchor="center", width=120)
+
+        tree.pack(fill="both", expand=True, padx=5, pady=5)
+        setattr(self, 'rejected_cheques_tree', tree)
     def setup_dashboard_ui(self, parent):
         # Header
         head = ctk.CTkFrame(parent, fg_color="transparent")
@@ -3488,7 +3570,17 @@ class FGSApp(customtkinter.CTk):
                     adr4 = str(df2.iloc[0].get("BADRS4", "") or "")
                     self.lbl_branch_info.configure(text=f"اسم العميل: {bname}\nالعنوان: {adr3}   {adr4}")
                 else:
-                    self.lbl_branch_info.configure(text="لا توجد بيانات فرع/عنوان لهذا العميل.")
+                    q3 = text(f"""
+                                                        SELECT DISTINCT EBname, EBADRS3, EBADRS4
+                                                        FROM {table_name}
+                                                        WHERE EBCLNT = :client_no
+                                                    """)
+                    df3 = pd.read_sql(q2, engine, params={"client_no": client_no})
+                    ebname = str(df2.iloc[0].get("EBname", "") or "")
+                    ebadr3 = str(df2.iloc[0].get("EBADRS3", "") or "")
+                    ebadr4 = str(df2.iloc[0].get("EBADRS4", "") or "")
+                    ebself.lbl_branch_info.configure(text=f"اسم العميل: {ebname}\nالعنوان: {ebadr3}   {ebadr4}")
+                    #self.lbl_branch_info.configure(text="لا توجد بيانات فرع/عنوان لهذا العميل.")
 
             # مسحنا الـ self.nuwairy_df لأننا مش هنحمل الملايين في الميموري
 
