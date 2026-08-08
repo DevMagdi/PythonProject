@@ -2463,6 +2463,16 @@ class FGSApp(customtkinter.CTk):
         )
         self.lbl_gl_info.pack(anchor="e", pady=(6, 0))  # التعديل هنا: anchor="e"
 
+        # 👇👇 الإضافة الجديدة: مكان مخصص لعرض رصيد 31-03-2017
+        self.lbl_gl_balance_2017 = ctk.CTkLabel(
+            info_inner,
+            text="الرصيد في 31-03-2017: 0.00",
+            font=("Segoe UI", 13, "bold"),
+            text_color="#10B981",  # لون أخضر مميز
+            justify="right",
+            anchor="e"
+        )
+        self.lbl_gl_balance_2017.pack(anchor="e", pady=(4, 0))
         # =========================
         # Results (Excel-like Sheet) + Toolbar
         # =========================
@@ -2985,6 +2995,7 @@ class FGSApp(customtkinter.CTk):
             messagebox.showerror("خطأ", f"حدث خطأ أثناء تصدير Excel:\n{e}")
             if hasattr(self, 'sys_logger'):
                 self.sys_logger.log(f"❌ فشل تصدير الملف: {e}", type="ERROR")
+
     def gl_search(self):
         """البحث الديناميكي للحركات وتعبئة الشيت بترتيب محاسبي دقيق وأداء صاروخي"""
         import tkinter.messagebox as messagebox
@@ -2999,6 +3010,7 @@ class FGSApp(customtkinter.CTk):
         if hasattr(self, 'sys_logger'):
             self.sys_logger.log(
                 f"🔎 بدء بحث الأستاذ العام -> الحساب: [{gl_acc_name}] | الفرع: [{branch_name}] | العملة: [{currency_name}] | من: [{date_from}] إلى: [{date_to}]")
+
         # التأكد من اختيار أستاذ عام
         if not gl_acc_name or "جاري التحميل" in gl_acc_name or "- اختر" in gl_acc_name:
             messagebox.showwarning("تنبيه", "يرجى اختيار أستاذ عام صحيح أولاً.")
@@ -3012,10 +3024,8 @@ class FGSApp(customtkinter.CTk):
         # استخراج اسم الفرع الصافي
         branch_name_only = branch_name.split(" - ")[-1].strip()
 
-        # الحفاظ على شكل الشيت أثناء التحميل (8 أعمدة)
-        # الحفاظ على شكل الشيت أثناء التحميل (9 أعمدة مش 8)
         if hasattr(self, "gl_sheet"):
-            loading_row = ["", "", "", "⏳ جاري سحب البيانات...", "", "", "", "", ""]  # ضفنا عنصر فاضي في الآخر
+            loading_row = ["", "", "", "⏳ جاري سحب البيانات...", "", "", "", "", ""]
             self.gl_sheet.set_sheet_data([loading_row], reset_col_positions=False, reset_row_positions=True)
 
         def search_task():
@@ -3062,7 +3072,7 @@ class FGSApp(customtkinter.CTk):
                 credit_codes = ['1', '4']
                 debit_codes = ['2', '3']
 
-                # 4. حساب الرصيد التراكمي السابق (الافتتاحي) - باستخدام itertuples للسرعة
+                # 4. حساب الرصيد التراكمي السابق (الافتتاحي)
                 opening_balance = 0.0
                 if date_from:
                     op_query = f"SELECT AAMT, ACOD1 FROM [dbo].[{target_table}] WHERE AGL = '{target_sgl}' AND ASB = '{target_ssubb}' AND ADATM < '{date_from}'"
@@ -3087,6 +3097,37 @@ class FGSApp(customtkinter.CTk):
                             else:
                                 opening_balance -= op_amt
 
+                # =======================================================
+                # 🌟 4.5 حساب رصيد 31-03-2017 المخصص (الإضافة الجديدة) 🌟
+                # =======================================================
+                balance_2017_val = 0.0
+                try:
+                    bal2017_query = f"SELECT AAMT, ACOD1 FROM [dbo].[{target_table}] WHERE AGL = '{target_sgl}' AND ASB = '{target_ssubb}' AND ADATM <= '20170331'"
+                    if target_curr_code is not None:
+                        bal2017_query += f" AND ACUR = '{target_curr_code}'"
+
+                    bal2017_df = pd.read_sql(bal2017_query, engine)
+                    for row in bal2017_df.itertuples(index=False):
+                        t_scod = str(row.ACOD1).strip() if pd.notna(row.ACOD1) else ""
+                        try:
+                            t_amt = abs(float(row.AAMT))
+                        except:
+                            t_amt = 0.0
+
+                        if t_scod in credit_codes:
+                            balance_2017_val += t_amt
+                        elif t_scod in debit_codes:
+                            balance_2017_val -= t_amt
+                        else:
+                            if float(row.AAMT) > 0:
+                                balance_2017_val += t_amt
+                            else:
+                                balance_2017_val -= t_amt
+                except Exception as e:
+                    if hasattr(self, 'sys_logger'):
+                        self.sys_logger.log(f"⚠️ فشل حساب رصيد 2017 للأستاذ العام: {e}", "WARNING")
+                # =======================================================
+
                 # 5. جلب حركات الفترة الحالية
                 main_query = f"""
                     SELECT ADATM, ABIAN, AAMT, ASEQ, AGL, ASB, ACUR, ACOD1
@@ -3100,10 +3141,6 @@ class FGSApp(customtkinter.CTk):
                 if date_to:
                     main_query += f" AND ADATM <= '{date_to}'"
 
-                # 🔥 اللوجيك المحاسبي للترتيب:
-                # 1. التاريخ (تصاعدي)
-                # 2. نوع الحركة: الدائن (1، 4 أو سالب) ييجي قبل المدين (2، 3 أو موجب)
-                # 3. القيمة المطلقة (تصاعدي)
                 main_query += """ 
                     ORDER BY 
                         ADATM ASC,
@@ -3118,14 +3155,12 @@ class FGSApp(customtkinter.CTk):
 
                 results_df = pd.read_sql(main_query, engine)
 
-                # طباعة اللوج للبيانات المسحوبة
                 if hasattr(self, 'sys_logger'):
                     self.sys_logger.log(f"تم سحب {len(results_df)} حركة.")
 
                 formatted_data = []
                 running_balance = opening_balance
 
-                # بناء الجدول باستخدام itertuples (أسرع بكتير من iterrows)
                 for row in results_df.itertuples(index=False):
                     date_val = str(row.ADATM) if pd.notna(row.ADATM) else ""
                     desc = str(row.ABIAN) if pd.notna(row.ABIAN) else ""
@@ -3165,7 +3200,7 @@ class FGSApp(customtkinter.CTk):
                         f"{debit:,.2f}" if debit > 0 else "0.00",
                         f"{credit:,.2f}" if credit > 0 else "0.00",
                         f"{running_balance:,.2f}",
-                        aseq_val  # <--- إضافة رقم النمارة كعنصر تاسع هنا
+                        aseq_val
                     ])
 
                 if not formatted_data:
@@ -3175,18 +3210,31 @@ class FGSApp(customtkinter.CTk):
                 self.after(0, lambda: self.gl_sheet.set_sheet_data(formatted_data, reset_col_positions=False,
                                                                    reset_row_positions=True))
 
+                # 🌟 تحديث واجهة المستخدم برصيد 2017 اللي ضفناه في الخطوة السابقة 🌟
+                if hasattr(self, 'lbl_gl_balance_2017'):
+                    self.after(0, lambda: self.lbl_gl_balance_2017.configure(
+                        text=f"الرصيد في 31-03-2017: {balance_2017_val:,.2f}"))
+
+                # 🌟 حفظ البيانات الخاصة بالتصدير للـ PDF (Meta Data) 🌟
+                self.gl_last_meta = {
+                    "gl_acc_name": gl_acc_name,
+                    "branch_name": branch_name,
+                    "currency": currency_name,
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "opening_balance": f"{opening_balance:,.2f}",
+                    "balance_2017": f"{balance_2017_val:,.2f}"
+                }
+
                 if hasattr(self, 'sys_logger'):
                     self.sys_logger.log("✅ تم سحب وعرض بيانات الأستاذ العام بنجاح.")
 
-
             except Exception as e:
-
                 if hasattr(self, 'sys_logger'):
                     self.sys_logger.log(f"❌ خطأ أثناء البحث: {e}", "ERROR")
                 self.after(0, lambda: messagebox.showerror("خطأ برمجي", f"حدث خطأ أثناء جلب البيانات:\n{e}"))
                 self.after(0, lambda: self.gl_sheet.set_sheet_data([["", "", "", "❌ حدث خطأ", "", "", "", "", ""]]))
 
-        # تشغيل الفانكشن في Background Thread عشان الشاشة متهنجش
         threading.Thread(target=search_task, daemon=True).start()
 
     def setup_customer_inquiry_ui(self, parent):
@@ -3515,10 +3563,8 @@ class FGSApp(customtkinter.CTk):
 
         self.ent_cust_search.bind("<KeyRelease>", on_search_change)
 
-
-
     def gl_export_pdf(self):
-        """تصدير PDF بالتنسيق السليم واعتبار أول حركة هي الرصيد الافتتاحي"""
+        """تصدير PDF بالتنسيق السليم واعتبار أول حركة هي الرصيد الافتتاحي مع إضافة رصيد 2017"""
         import tkinter.messagebox as messagebox
         from tkinter import filedialog
         from datetime import datetime
@@ -3615,7 +3661,7 @@ class FGSApp(customtkinter.CTk):
         opening_balance_val = 0.0
         trx_count = 0
 
-        # ✅ هنا السحر: قراءة رصيد الافتتاح من أول حركة في الشيت مباشرة
+        # ✅ قراءة رصيد الافتتاح من أول حركة في الشيت مباشرة
         for r in rows:
             if len(r) < 8: continue
 
@@ -3693,8 +3739,17 @@ class FGSApp(customtkinter.CTk):
 
             story = []
 
+            # ========================================================
+            # 🌟 إضافة رصيد 2017 إلى الـ Info Table في ملف الـ PDF 🌟
+            # ========================================================
             right_lines = [f"حساب الأستاذ العام: {gl_acc_name}", f"الفرع: {branch_name}"]
             left_lines = [f"العملة: {currency_name}", period_text if period_text else "الفترة: غير محددة"]
+
+            # بنجيب رصيد 2017 من الميتا داتا اللي حفظناها ونضيفه كسطر ثالث في اليمين
+            if hasattr(self, 'gl_last_meta') and 'balance_2017' in self.gl_last_meta:
+                bal_2017 = self.gl_last_meta['balance_2017']
+                right_lines.append(f"الرصيد في 31-03-2017: {bal_2017}")
+            # ========================================================
 
             info_tbl = Table([
                 [[Paragraph(ar(x), st_right) for x in right_lines], [Paragraph(ar(x), st_left) for x in left_lines]]
@@ -3746,28 +3801,20 @@ class FGSApp(customtkinter.CTk):
                 if len(r) < 8: continue
 
                 raw_date = str(r[0]).strip()
-                # فصل الوقت عن التاريخ لمنع التداخل
                 formatted_date = raw_date.replace(" ", "<br/>")
                 date_val = Paragraph(formatted_date, st_center_date)
 
-                # --- بداية تعديل البيان ورقم النمارة ---
                 desc_val = str(r[4]).strip()
-
-                # هنقرا النمارة من العمود التاسع (الاندكس 8) مع حماية لو الشيت فاضي
                 aseq_val = str(r[8]).strip() if len(r) > 8 else ""
 
                 if aseq_val and aseq_val not in ["None", "", "0"]:
-                    # تشكيل العربي
                     desc_ar = ar(desc_val)
                     aseq_ar = ar(f"رقم النمارة: {aseq_val}")
-
-                    # دمجهم في سطرين (البيان بخط عادي، النمارة تحته بخط أصغر ولون رمادي)
                     final_desc_html = f"{desc_ar}<br/><font color='#5B6770' size='8'>{aseq_ar}</font>"
                 else:
                     final_desc_html = ar(desc_val)
 
                 desc_para = Paragraph(final_desc_html, st_right)
-                # --- نهاية التعديل ---
 
                 debit_val = str(r[5])
                 credit_val = str(r[6])
@@ -3775,7 +3822,6 @@ class FGSApp(customtkinter.CTk):
 
                 table_data.append([bal_val, credit_val, debit_val, desc_para, date_val])
 
-            # مقاسات تمنع أي تداخل (الإجمالي 182 مم)
             main_tbl = Table(table_data, colWidths=[25 * mm, 20 * mm, 20 * mm, 88 * mm, 29 * mm], repeatRows=1)
             main_tbl.setStyle(TableStyle([
                 ("FONTNAME", (0, 0), (-1, -1), base_font),
@@ -3808,7 +3854,8 @@ class FGSApp(customtkinter.CTk):
 
         except Exception as e:
             messagebox.showerror("خطأ", f"حدث خطأ أثناء تصدير PDF:\n{e}")
-            self.sys_logger.log(f"❌ فشل تصدير ملف الأستاذ العام: {e}", "ERROR")
+            if hasattr(self, 'sys_logger'):
+                self.sys_logger.log(f"❌ فشل تصدير ملف الأستاذ العام: {e}", "ERROR")
 
     def _premium_dropdown(self, anchor_widget, values, on_select, title="اختر", width=420, height=360):
         import customtkinter as ctk
@@ -4533,9 +4580,6 @@ class FGSApp(customtkinter.CTk):
 
         threading.Thread(target=self._bg_fetch_transactions_logic, args=(client_no, acc_type_name, currency_name),
                          daemon=True).start()
-
-
-
 
     def _bg_fetch_transactions_logic(self, client_no, acc_type_name, currency_name):
         import pandas as pd
