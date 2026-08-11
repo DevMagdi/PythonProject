@@ -374,6 +374,7 @@ class FGSApp(customtkinter.CTk):
                 ("بحث عن عميل", "customer"),
                 ("بحث برصيد العميل", "customer_balance"),
                 ("الشهادات الملغاة برقم العميل", "cancelled_certs"),
+                ("الاستفسار عن التوكيلات", "mandates"),
             ],
             # ▼ ▼ ▼ الجزء الجديد اللي هيتم إضافته ▼ ▼ ▼
             "📄 الشيكات": [
@@ -558,6 +559,10 @@ class FGSApp(customtkinter.CTk):
         self.page_cancelled_certs = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.setup_cancelled_certs_ui(self.page_cancelled_certs)
 
+        # 8. شاشة الاستفسار عن التوكيلات (الشاشة الجديدة)
+        self.page_mandates = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self.setup_mandates_ui(self.page_mandates)
+
     def show_page(self, name):
         if hasattr(self, 'sys_logger'):
             self.sys_logger.log(f"🔄 المستخدم انتقل إلى شاشة: {name}")
@@ -570,7 +575,8 @@ class FGSApp(customtkinter.CTk):
             getattr(self, 'page_stopped_cheques', None),
             getattr(self, 'page_rejected_cheques', None),
             getattr(self, 'page_customer_balance', None),
-            getattr(self, 'page_cancelled_certs', None)
+            getattr(self, 'page_cancelled_certs', None),
+            getattr(self, 'page_mandates', None)
         ]
         for p in pages_to_hide:
             if p is not None:
@@ -584,7 +590,8 @@ class FGSApp(customtkinter.CTk):
             getattr(self, 'btn_stopped_cheques', None),
             getattr(self, 'btn_rejected_cheques', None),
             getattr(self, 'btn_customer_balance', None),
-            getattr(self, 'btn_cancelled_certs', None)
+            getattr(self, 'btn_cancelled_certs', None),
+            getattr(self, 'btn_mandates', None)
         ]
         for b in buttons_to_reset:
             if b is not None:
@@ -646,6 +653,291 @@ class FGSApp(customtkinter.CTk):
             # تحميل الفروع تلقائياً عند فتح الشاشة لو دالة الفروع متاحة عندك
             if hasattr(self, 'nuwairy_load_branches'):
                 self.nuwairy_load_branches()
+
+        # --- تشغيل شاشة التوكيلات الجديدة ---
+        elif name == "mandates":
+            if hasattr(self, 'page_mandates'):
+                self.page_mandates.pack(fill="both", expand=True)
+            if hasattr(self, 'btn_mandates'):
+                self.btn_mandates.configure(fg_color=FIB_GREEN, text_color="white")
+            if hasattr(self, 'nuwairy_load_branches'):
+                self.nuwairy_load_branches()
+
+    def setup_mandates_ui(self, parent):
+        import pandas as pd
+        import customtkinter as ctk
+        from tkinter import messagebox
+        import threading
+        import logging
+        import re
+
+        # =========================================
+        # 🎨 1. Premium Theme Colors
+        # =========================================
+        FIB_GREEN = "#005C34"
+        FIB_GOLD = "#C5A059"
+        BG_MAIN = "#F8FAFC"
+        CARD_BG = "#FFFFFF"
+        BOX_BG = "#F1F5F9"
+        TEXT_DARK = "#0F172A"
+        TEXT_MUTED = "#64748B"
+
+        main_container = ctk.CTkFrame(parent, fg_color=BG_MAIN)
+        main_container.pack(fill="both", expand=True)
+
+        header = ctk.CTkFrame(main_container, fg_color=FIB_GREEN, height=65, corner_radius=0)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        ctk.CTkFrame(main_container, fg_color=FIB_GOLD, height=4, corner_radius=0).pack(fill="x")
+
+        title_lbl = ctk.CTkLabel(header, text="الاستفسار عن التوكيلات برقم العميل", font=("Segoe UI", 22, "bold"),
+                                 text_color=CARD_BG)
+        title_lbl.pack(side="right", padx=30, pady=15)
+
+        # =========================================
+        # 🔍 2. Search Area
+        # =========================================
+        search_frame = ctk.CTkFrame(main_container, fg_color=CARD_BG, corner_radius=15, border_width=1,
+                                    border_color="#E2E8F0")
+        search_frame.pack(fill="x", padx=20, pady=20)
+
+        search_inner = ctk.CTkFrame(search_frame, fg_color="transparent")
+        search_inner.pack(side="right", fill="y", padx=20, pady=15)
+
+        btn_search = ctk.CTkButton(search_inner, text="🔍 بحث", font=("Segoe UI", 15, "bold"),
+                                   fg_color=FIB_GREEN, hover_color="#004426", text_color="white",
+                                   width=120, height=40, corner_radius=8, command=lambda: execute_search())
+        btn_search.pack(side="left", padx=10)
+
+        self.ent_mandates_cust_no = ctk.CTkEntry(search_inner, font=("Segoe UI", 15, "bold"),
+                                                 justify="center", placeholder_text="رقم العميل...",
+                                                 width=200, height=40, border_color="#CBD5E1")
+        self.ent_mandates_cust_no.pack(side="left", padx=10)
+
+        ctk.CTkLabel(search_inner, text="رقم العميل:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(
+            side="left", padx=(10, 2))
+
+        if hasattr(self, '_create_premium_select'):
+            self.cmb_mandates_branch_box, self.cmb_mandates_branch = self._create_premium_select(
+                search_inner,
+                values=["جاري التحميل..."],
+                default="جاري التحميل...",
+                title="اختر الفرع"
+            )
+            self.cmb_mandates_branch_box.pack(side="left", padx=10)
+        else:
+            self.cmb_mandates_branch = ctk.CTkComboBox(search_inner, font=("Segoe UI", 14, "bold"), justify="right",
+                                                       width=250, height=40, border_color="#CBD5E1")
+            self.cmb_mandates_branch.pack(side="left", padx=10)
+
+        ctk.CTkLabel(search_inner, text="الفرع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left",
+                                                                                                            padx=(10,
+                                                                                                                  2))
+
+        def load_branches_to_combo():
+            if hasattr(self, 'branch_mapping') and self.branch_mapping:
+                branches = list(self.branch_mapping.keys())
+                self.cmb_mandates_branch.configure(values=branches)
+                self.cmb_mandates_branch.set(branches[0])
+            else:
+                if hasattr(self, 'nuwairy_load_branches'):
+                    self.nuwairy_load_branches()
+                self.after(500, load_branches_to_combo)
+
+        load_branches_to_combo()
+        self.ent_mandates_cust_no.bind("<Return>", lambda event: execute_search())
+
+        # =========================================
+        # 📜 3. Results Area
+        # =========================================
+        self.mandates_results_scroll = ctk.CTkScrollableFrame(main_container, fg_color="transparent")
+        self.mandates_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
+
+        # --- دالة تنظيف النصوص والأسماء ---
+        def clean_arabic_name(raw_name):
+            if pd.isna(raw_name) or not str(raw_name).strip():
+                return "غير مسجل"
+            text = str(raw_name).strip()
+            # إزالة أي أرقام مسجلة في بداية الاسم (مثل 300083)
+            text = re.sub(r'^\d+', '', text).strip()
+            text = re.sub(r'\s+(يه|ية|ه|ة)\b', r'\1', text)
+            previous_text = ""
+            while text != previous_text:
+                previous_text = text
+                text = re.sub(r'([ةىء])([\u0621-\u064A])', r'\1 \2', text)
+                text = re.sub(r'([\u0621-\u064A]{2,})((?:ب|ك|ف|و)?ال[\u0621-\u064A]{2,})', r'\1 \2', text)
+                for p in ['عبد', 'ابو', 'أبو', 'ام', 'أم', 'بن', 'بنت', 'ذو', 'ذي']:
+                    text = re.sub(f'(?<![\u0621-\u064A])({p})(?=[\u0621-\u064A])', r'\1 ', text)
+                for s in ['الدين', 'مخمد', 'الله', 'الاسلام', 'الإسلام', 'الحق']:
+                    text = re.sub(f'(?<=[\u0621-\u064A])({s})(?![\u0621-\u064A])', r' \1', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+            return text
+
+        # --- دالة تنسيق التاريخ من YYYYMMDD إلى YYYY-MM-DD ---
+        def format_date_str(raw_date):
+            if pd.isna(raw_date) or not str(raw_date).strip():
+                return "—"
+            d_str = str(raw_date).split()[0].split('.')[0].strip()
+            if len(d_str) == 8 and d_str.isdigit():
+                return f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+            return d_str
+
+        # =========================================
+        # ⚙️ 4. Search Engine Logic
+        # =========================================
+        def execute_search():
+            branch_name = self.cmb_mandates_branch.get()
+            cust_no = self.ent_mandates_cust_no.get().strip()
+
+            if not cust_no:
+                messagebox.showwarning("تنبيه", "يرجى إدخال رقم العميل أولاً")
+                self.ent_mandates_cust_no.focus()
+                return
+
+            if not hasattr(self, 'branch_mapping') or branch_name not in self.branch_mapping:
+                messagebox.showerror("خطأ", "برجاء اختيار فرع صحيح")
+                return
+
+            branch_info = self.branch_mapping[branch_name]
+            branch_code = branch_info[0] if isinstance(branch_info, tuple) else branch_info
+
+            for widget in self.mandates_results_scroll.winfo_children():
+                widget.destroy()
+
+            lbl_loading = ctk.CTkLabel(self.mandates_results_scroll, text="⚡ جاري البحث عن التوكيلات...",
+                                       font=("Segoe UI", 16, "bold"), text_color=FIB_GOLD)
+            lbl_loading.pack(pady=50)
+
+            def fetch_data():
+                try:
+                    engine = getattr(self, '_get_db_connection', lambda: None)()
+                    if not engine:
+                        raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
+
+                    # 1. جلب اسم الجدول الخاص بالفرع
+                    branch_query = f"SELECT GL_TableName, TableName FROM [dbo].[TBL_Branches] WITH (NOLOCK) WHERE BranchCode = N'{branch_code}'"
+                    branch_df = pd.read_sql(branch_query, engine)
+
+                    target_table = None
+                    if not branch_df.empty:
+                        target_table = branch_df.iloc[0].get('GL_TableName') or branch_df.iloc[0].get('TableName')
+
+                    fetched_client_name = "غير مسجل"
+                    if target_table and pd.notna(target_table):
+                        target_table = str(target_table).strip()
+                        client_query = f"SELECT TOP 1 BNAME FROM [dbo].[{target_table}] WITH (NOLOCK) WHERE BCLNT = N'{cust_no}'"
+                        client_df = pd.read_sql(client_query, engine)
+                        if not client_df.empty and pd.notna(client_df.iloc[0].get('BNAME')):
+                            fetched_client_name = str(client_df.iloc[0].get('BNAME')).strip()
+
+                    # 2. الاستعلام عن التوكيلات
+                    sql = f"""
+                        SELECT sname, sdatt, stknum, SEE
+                        FROM [dbo].[tbl_BAMandates] WITH (NOLOCK)
+                        WHERE SBR = N'{branch_code}' 
+                          AND sclnt = N'{cust_no}'
+                    """
+                    df = pd.read_sql(sql, engine)
+
+                    self.after(0, lambda: update_results_ui(df, fetched_client_name, cust_no, branch_name))
+                except Exception as e:
+                    logging.error(f"Error fetching mandates: {e}")
+                    self.after(0, lambda: update_results_ui(pd.DataFrame(), "غير مسجل", cust_no, branch_name,
+                                                            error=str(e)))
+
+            threading.Thread(target=fetch_data, daemon=True).start()
+
+        def update_results_ui(df, client_name, cust_no, branch_name, error=None):
+            for widget in self.mandates_results_scroll.winfo_children():
+                widget.destroy()
+
+            if error:
+                ctk.CTkLabel(self.mandates_results_scroll, text=f"❌ حدث خطأ أثناء البحث:\n{error}",
+                             font=("Segoe UI", 14, "bold"), text_color="#EF4444").pack(pady=40)
+                return
+
+            if df.empty:
+                ctk.CTkLabel(self.mandates_results_scroll, text="🔍 لا توجد توكيلات مسجلة لهذا العميل في هذا الفرع",
+                             font=("Segoe UI", 18, "bold"), text_color=TEXT_MUTED).pack(pady=60)
+                return
+
+            cleaned_client_name = clean_arabic_name(client_name)
+
+            # =========================================
+            # 👤 1. كارت بيانات العميل الرئيسي (مرة واحدة بالفيو)
+            # =========================================
+            client_header_card = ctk.CTkFrame(self.mandates_results_scroll, fg_color=CARD_BG, corner_radius=12,
+                                              border_width=1, border_color="#CBD5E1")
+            client_header_card.pack(fill="x", padx=10, pady=(5, 15))
+
+            client_inner = ctk.CTkFrame(client_header_card, fg_color="transparent")
+            client_inner.pack(fill="x", padx=20, pady=12)
+
+            # اسم العميل ورقم الحساب
+            ctk.CTkLabel(client_inner, text=f"👤 اسم العميل: {cleaned_client_name}", font=("Segoe UI", 16, "bold"),
+                         text_color=FIB_GREEN).pack(side="right")
+
+            ctk.CTkLabel(client_inner, text=f"الفرع: {branch_name} | رقم العميل: {cust_no}",
+                         font=("Segoe UI", 13, "bold"),
+                         text_color=TEXT_MUTED, fg_color=BOX_BG, corner_radius=6).pack(side="left", ipadx=10, ipady=3)
+
+            # =========================================
+            # 📑 2. كروت التوكيلات الخاصة بالعميل
+            # =========================================
+            for _, row in df.iterrows():
+                agent_name = clean_arabic_name(row['sname'])
+                mandate_num = str(row['stknum']).replace('.0', '') if pd.notna(row['stknum']) else "—"
+                mandate_date = format_date_str(row['sdatt'])
+
+                # كود الإلغاء SEE (1 = ملغي, 0 = ساري)
+                see_val = str(row['SEE']).replace('.0', '').strip() if pd.notna(row['SEE']) else ""
+
+                if see_val == '1':
+                    status_text = "ملغي 🛑"
+                    status_color = "#DC2626"
+                    status_bg = "#FEE2E2"
+                elif see_val == '0':
+                    status_text = "ساري ✅"
+                    status_color = "#005C34"
+                    status_bg = "#DCFCE7"
+                else:
+                    status_text = f"غير محدد ({see_val})"
+                    status_color = TEXT_MUTED
+                    status_bg = BOX_BG
+
+                card = ctk.CTkFrame(self.mandates_results_scroll, fg_color=CARD_BG, corner_radius=12,
+                                    border_width=1, border_color="#E2E8F0")
+                card.pack(fill="x", padx=10, pady=8)
+
+                stripe_color = status_color if see_val in ['0', '1'] else FIB_GOLD
+                ctk.CTkFrame(card, fg_color=stripe_color, width=5, corner_radius=0).pack(side="right", fill="y",
+                                                                                         pady=10)
+
+                card_content = ctk.CTkFrame(card, fg_color="transparent")
+                card_content.pack(fill="both", expand=True, padx=20, pady=12)
+
+                # الهيدر: رقم التوكيل والحالة
+                header_row = ctk.CTkFrame(card_content, fg_color="transparent")
+                header_row.pack(fill="x", pady=(0, 8))
+
+                ctk.CTkLabel(header_row, text=f"رقم التوكيل: {mandate_num} 📑", font=("Segoe UI", 16, "bold"),
+                             text_color=TEXT_DARK).pack(side="right")
+
+                ctk.CTkLabel(header_row, text=f"الحالة: {status_text}", font=("Segoe UI", 13, "bold"),
+                             text_color=status_color, fg_color=status_bg, corner_radius=6).pack(side="left", ipadx=8,
+                                                                                                ipady=2)
+
+                # تفاصيل التوكيل: اسم صاحب التوكيل وتاريخ التوكيل
+                details_row = ctk.CTkFrame(card_content, fg_color="transparent")
+                details_row.pack(fill="x", pady=4)
+
+                ctk.CTkLabel(details_row, text=f"اسم صاحب التوكيل: {agent_name} 📝", font=("Segoe UI", 14, "bold"),
+                             text_color=TEXT_MUTED).pack(side="right")
+
+                ctk.CTkLabel(details_row, text=f"تاريخ التوكيل: {mandate_date} 📅", font=("Segoe UI", 13, "bold"),
+                             text_color=FIB_GREEN, fg_color=BOX_BG, corner_radius=6).pack(side="left", ipadx=10,
+                                                                                          ipady=2)
     def stopped_cheques_fetch_data(self):
         """جلب بيانات الشيكات الموقوفة بسرعة فائقة وتطبيق الـ Regex على الاسم"""
         branch_val = self.cmb_stopped_branch.get().strip()
