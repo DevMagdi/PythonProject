@@ -782,20 +782,9 @@ class FGSApp(customtkinter.CTk):
                                    command=lambda: execute_search())
         btn_search.pack(side="left", padx=5)
 
-        # اختيار نوع الاستفسار
-        self.cmb_cheque_status = ctk.CTkComboBox(
-            search_inner, font=("Segoe UI", 14, "bold"), justify="right", width=140, height=40, border_color="#CBD5E1",
-            values=["0 - الكل", "1 - مسدد", "2 - قانونية", "3 - جدولة", "4 - قائم"]
-        )
-        self.cmb_cheque_status.pack(side="left", padx=10)
-        self.cmb_cheque_status.set("0 - الكل")
-        ctk.CTkLabel(search_inner, text="النوع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left",
-                                                                                                            padx=(10,
-                                                                                                                  2))
-
         # إدخال رقم العميل
         self.ent_cheque_cust_no = ctk.CTkEntry(search_inner, font=("Segoe UI", 15, "bold"), justify="center",
-                                               placeholder_text="رقم العميل...", width=150, height=40,
+                                               placeholder_text="رقم العميل...", width=160, height=40,
                                                border_color="#CBD5E1")
         self.ent_cheque_cust_no.pack(side="left", padx=10)
         ctk.CTkLabel(search_inner, text="رقم الحساب:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(
@@ -810,7 +799,7 @@ class FGSApp(customtkinter.CTk):
             self.cmb_cheque_branch_box.pack(side="left", padx=10)
         else:
             self.cmb_cheque_branch = ctk.CTkComboBox(search_inner, font=("Segoe UI", 14, "bold"), justify="right",
-                                                     width=200, height=40, border_color="#CBD5E1")
+                                                     width=220, height=40, border_color="#CBD5E1")
             self.cmb_cheque_branch.pack(side="left", padx=10)
         ctk.CTkLabel(search_inner, text="الفرع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left",
                                                                                                             padx=(10,
@@ -857,7 +846,6 @@ class FGSApp(customtkinter.CTk):
 
         def clear_search():
             self.ent_cheque_cust_no.delete(0, 'end')
-            self.cmb_cheque_status.set("0 - الكل")
             for widget in self.cheque_results_scroll.winfo_children():
                 widget.destroy()
 
@@ -879,8 +867,6 @@ class FGSApp(customtkinter.CTk):
         def execute_search():
             branch_name = self.cmb_cheque_branch.get().strip()
             cust_no = self.ent_cheque_cust_no.get().strip()
-            status_full = self.cmb_cheque_status.get().strip()
-            status_code = status_full.split(" - ")[0]  # استخراج الرقم 0 أو 1 أو 2 الخ
 
             if not cust_no:
                 messagebox.showwarning("تنبيه", "يرجى إدخال رقم العميل")
@@ -908,10 +894,10 @@ class FGSApp(customtkinter.CTk):
                     cust_str = cust_no.strip()
                     try:
                         cust_int_str = str(int(cust_str))
-                    except:
+                    except Exception:
                         cust_int_str = cust_str
 
-                    # 1. جلب اسم العميل كالمعتاد
+                    # 1. جلب اسم العميل
                     target_table = None
                     try:
                         branch_query = f"SELECT TableName FROM [dbo].[TBL_Branches] WITH (NOLOCK) WHERE BranchCode = '{branch_code}'"
@@ -935,56 +921,46 @@ class FGSApp(customtkinter.CTk):
                         except Exception:
                             pass
 
-                    # 2. الاستعلام عن الشيكات المرتدة
-                    # **تنبيه**: يرجى التأكد من أن الأعمدة (cbr, cclnt, csts) هي الصحيحة في قاعدة البيانات
-                    status_filter = ""
-                    if status_code != "0":
-                        status_filter = f" AND csts = '{status_code}' "  # افترضت عمود الحالة اسمه csts
-
-                    sql_cheques = f"""
-                        SELECT ccur, camt1, camt9, camt7, camt8
-                        FROM [dbo].[tbl_refferedcheques] WITH (NOLOCK)
-                        WHERE cbr = '{branch_code}'
-                          AND (cclnt = '{cust_str}' OR cclnt = '{cust_int_str}')
-                          {status_filter}
-                    """
+                    # 2. الاستعلام عن الشيكات المرتدة (تم إلغاء التصفية بحالة الشيك)
+                            # 2. الاستعلام عن الشيكات المرتدة (تم التعديل لاستخدام العمود المُفهرس)
+                        sql_cheques = f"""
+                                    SELECT ccur, camt1, camt9, camt7, camt8, cchno, cdat1, csub, cgl
+                                    FROM [dbo].[tbl_refferedcheques] WITH (NOLOCK)
+                                    WHERE cbr = '{branch_code}'
+                                      AND (cclnt_indexed = '{cust_str}' OR cclnt_indexed = '{cust_int_str}')
+                                """
                     df = pd.read_sql(sql_cheques, engine)
 
-                    # 3. المعالجة والتجميع باستخدام Pandas (عشان السرعة)
+                    # 3. المعالجة والتجميع باستخدام Pandas
                     if not df.empty:
-                        # تحويل المبالغ لأرقام عشان التجميع
                         for col in ['camt1', 'camt9', 'camt7', 'camt8']:
                             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-                        # مطابقة كود العملة باسمها
                         df['CURR_NAME'] = df['ccur'].astype(str).str.strip().map(self.currency_map_code_to_name).fillna(
                             df['ccur'].astype(str))
 
-                        # التجميع (Grouping) بناءً على العملة (عشان لو العميل عنده شيكات بأكثر من عملة)
                         summary_df = df.groupby('CURR_NAME').agg(
-                            check_count=('camt1', 'count'),  # عدد الشيكات (عدد السطور)
-                            total_camt1=('camt1', 'sum'),  # إجمالي المبالغ
-                            total_camt9=('camt9', 'sum'),  # إجمالي المسدد
-                            total_camt7=('camt7', 'sum'),  # إجمالي المتأخرات
-                            total_camt8=('camt8', 'sum')  # إجمالي التعويض
+                            check_count=('camt1', 'count'),
+                            total_camt1=('camt1', 'sum'),
+                            total_camt9=('camt9', 'sum'),
+                            total_camt7=('camt7', 'sum'),
+                            total_camt8=('camt8', 'sum')
                         ).reset_index()
                     else:
                         summary_df = pd.DataFrame()
 
-                    self.after(0, lambda: update_results_ui(summary_df, fetched_client_name, cust_no, branch_name,
-                                                            status_full))
+                    self.after(0, lambda: update_results_ui(df, summary_df, fetched_client_name, cust_no, branch_name))
                 except Exception as e:
                     logging.error(f"Error fetching cheques: {e}")
-                    self.after(0,
-                               lambda: update_results_ui(pd.DataFrame(), "غير مسجل", cust_no, branch_name, status_full,
-                                                         error=str(e)))
+                    self.after(0, lambda: update_results_ui(pd.DataFrame(), pd.DataFrame(), "غير مسجل", cust_no,
+                                                            branch_name, error=str(e)))
 
             threading.Thread(target=fetch_data, daemon=True).start()
 
         # =========================================
         # 📑 عرض النتائج والتجميعات
         # =========================================
-        def update_results_ui(summary_df, client_name, cust_no, branch_name, status_full, error=None):
+        def update_results_ui(df, summary_df, client_name, cust_no, branch_name, error=None):
             for widget in self.cheque_results_scroll.winfo_children():
                 widget.destroy()
 
@@ -993,12 +969,12 @@ class FGSApp(customtkinter.CTk):
                              text_color="#EF4444").pack(pady=40)
                 return
 
-            if summary_df.empty:
+            if summary_df.empty or df.empty:
                 ctk.CTkLabel(self.cheque_results_scroll, text="✔️ لا توجد شيكات مرتدة مطابقة لبحثك",
                              font=("Segoe UI", 18, "bold"), text_color=TEXT_MUTED).pack(pady=60)
                 return
 
-            # --- كارت بيانات العميل الرئيسي ---
+            # --- 1. كارت بيانات العميل الرئيسي ---
             client_card = ctk.CTkFrame(self.cheque_results_scroll, fg_color=CARD_BG, corner_radius=12, border_width=1,
                                        border_color="#CBD5E1")
             client_card.pack(fill="x", padx=10, pady=(5, 15))
@@ -1011,53 +987,114 @@ class FGSApp(customtkinter.CTk):
 
             info_frame = ctk.CTkFrame(client_inner, fg_color="transparent")
             info_frame.pack(side="left")
-            ctk.CTkLabel(info_frame, text=f"الحالة: {status_full}", font=("Segoe UI", 13, "bold"), text_color="#FFFFFF",
-                         fg_color="#DC2626", corner_radius=6).pack(side="right", padx=5, ipadx=10, ipady=3)
             ctk.CTkLabel(info_frame, text=f"الفرع: {branch_name} | الحساب: {cust_no}", font=("Segoe UI", 13, "bold"),
                          text_color=TEXT_MUTED, fg_color=BOX_BG, corner_radius=6).pack(side="right", ipadx=10, ipady=3)
 
             # دالة لتنسيق المبالغ المالية
             def format_money(val):
-                return "{:,.2f}".format(float(val))
+                try:
+                    return "{:,.2f}".format(float(val))
+                except Exception:
+                    return "0.00"
 
-            # --- رندر كروت الإجماليات (لكل عملة) ---
+            # دالة مساعدة لإنشاء المربعات
+            def create_stat_box(parent_frame, title, value, v_color):
+                box = ctk.CTkFrame(parent_frame, fg_color=BOX_BG, corner_radius=8)
+                box.pack(side="right", fill="x", expand=True, padx=4)
+                ctk.CTkLabel(box, text=title, font=("Segoe UI", 12, "bold"), text_color=TEXT_MUTED).pack(
+                    anchor="center", pady=(8, 2))
+                ctk.CTkLabel(box, text=value, font=("Segoe UI", 16, "bold"), text_color=v_color).pack(anchor="center",
+                                                                                                      pady=(0, 8))
+
+            # =========================================
+            # --- 2. رندر كروت الخلاصة (الإجماليات) ---
+            # =========================================
             for index, row in summary_df.iterrows():
                 card = ctk.CTkFrame(self.cheque_results_scroll, fg_color=CARD_BG, corner_radius=12, border_width=1,
                                     border_color="#E2E8F0")
                 card.pack(fill="x", padx=10, pady=8)
 
-                # العنوان الخاص بالعملة
                 header_row = ctk.CTkFrame(card, fg_color="transparent")
                 header_row.pack(fill="x", padx=15, pady=(15, 5))
                 ctk.CTkLabel(header_row, text=f"📊 ملخص المبالغ بعُملة: {row.get('CURR_NAME', '')}",
                              font=("Segoe UI", 16, "bold"), text_color=FIB_GOLD).pack(side="right")
 
-                # خط فاصل
                 ctk.CTkFrame(card, fg_color="#F1F5F9", height=2).pack(fill="x", padx=15, pady=5)
 
-                # المربعات (Grid) للإجماليات
                 stats_frame = ctk.CTkFrame(card, fg_color="transparent")
                 stats_frame.pack(fill="x", padx=15, pady=(5, 15))
 
-                # دالة مساعدة لإنشاء المربعات
-                def create_stat_box(parent_frame, title, value, v_color):
-                    box = ctk.CTkFrame(parent_frame, fg_color=BOX_BG, corner_radius=8)
-                    box.pack(side="right", fill="x", expand=True, padx=4)
-                    ctk.CTkLabel(box, text=title, font=("Segoe UI", 12, "bold"), text_color=TEXT_MUTED).pack(
-                        anchor="center", pady=(8, 2))
-                    ctk.CTkLabel(box, text=value, font=("Segoe UI", 16, "bold"), text_color=v_color).pack(
-                        anchor="center", pady=(0, 8))
+                create_stat_box(stats_frame, "إجمالي التعويض", format_money(row.get('total_camt8', 0)), "#DC2626")
+                create_stat_box(stats_frame, "إجمالي المتأخرات", format_money(row.get('total_camt7', 0)), "#EA580C")
+                create_stat_box(stats_frame, "إجمالي المسدد", format_money(row.get('total_camt9', 0)), "#2563EB")
+                create_stat_box(stats_frame, "مجموع المبالغ", format_money(row.get('total_camt1', 0)), FIB_GREEN)
+                create_stat_box(stats_frame, "عدد الشيكات", str(row.get('check_count', 0)), TEXT_DARK)
 
-                # ترتيب المربعات من اليمين لليسار
-                create_stat_box(stats_frame, "إجمالي التعويض", format_money(row.get('total_camt8', 0)),
-                                "#DC2626")  # camt8
-                create_stat_box(stats_frame, "إجمالي المتأخرات", format_money(row.get('total_camt7', 0)),
-                                "#EA580C")  # camt7
-                create_stat_box(stats_frame, "إجمالي المسدد", format_money(row.get('total_camt9', 0)),
-                                "#2563EB")  # camt9
-                create_stat_box(stats_frame, "مجموع المبالغ", format_money(row.get('total_camt1', 0)),
-                                FIB_GREEN)  # camt1
-                create_stat_box(stats_frame, "عدد الشيكات", str(row.get('check_count', 0)), TEXT_DARK)  # Count
+            # =========================================
+            # --- فاصل بصري بين الخلاصة والتفاصيل ---
+            # =========================================
+            separator_frame = ctk.CTkFrame(self.cheque_results_scroll, fg_color="transparent")
+            separator_frame.pack(fill="x", padx=10, pady=(20, 10))
+            ctk.CTkLabel(separator_frame, text="📑 تفاصيل الشيكات (كل شيك على حدة)", font=("Segoe UI", 18, "bold"),
+                         text_color=FIB_GREEN).pack(side="right")
+            ctk.CTkFrame(separator_frame, fg_color="#CBD5E1", height=2).pack(side="right", fill="x", expand=True,
+                                                                             padx=(20, 10))
+
+            # =========================================
+            # --- 3. رندر كروت التفاصيل (كل شيك لوحده) ---
+            # =========================================
+            for index, row in df.iterrows():
+                detail_card = ctk.CTkFrame(self.cheque_results_scroll, fg_color=CARD_BG, corner_radius=12,
+                                           border_width=1, border_color="#E2E8F0")
+                detail_card.pack(fill="x", padx=10, pady=6)
+
+                ctk.CTkFrame(detail_card, fg_color=FIB_GREEN, width=6, corner_radius=0).pack(side="right", fill="y",
+                                                                                             pady=10)
+
+                card_content = ctk.CTkFrame(detail_card, fg_color="transparent")
+                card_content.pack(fill="both", expand=True, padx=15, pady=12)
+
+                # رأس كارت الشيك
+                detail_header = ctk.CTkFrame(card_content, fg_color="transparent")
+                detail_header.pack(fill="x", pady=(0, 8))
+
+                cchno_val = str(row.get('cchno', '—')).strip()
+                if cchno_val in ['nan', 'None', '']: cchno_val = '—'
+
+                curr_display = row.get('CURR_NAME', str(row.get('ccur', '—')))
+
+                cdat1_val = row.get('cdat1')
+                if pd.isna(cdat1_val):
+                    cdat1_str = "—"
+                else:
+                    try:
+                        cdat1_str = pd.to_datetime(cdat1_val).strftime('%Y-%m-%d')
+                    except Exception:
+                        cdat1_str = str(cdat1_val)
+
+                ctk.CTkLabel(detail_header, text=f"رقم الشيك: {cchno_val}", font=("Segoe UI", 16, "bold"),
+                             text_color=TEXT_DARK).pack(side="right")
+                ctk.CTkLabel(detail_header, text=f"العملة: {curr_display}", font=("Segoe UI", 12, "bold"),
+                             text_color="#FFFFFF", fg_color=TEXT_MUTED, corner_radius=6).pack(side="left", ipadx=8,
+                                                                                              ipady=2)
+
+                ctk.CTkFrame(card_content, fg_color="#F1F5F9", height=2).pack(fill="x", pady=4)
+
+                # قيم الشيك الفردية والحسابات
+                detail_stats = ctk.CTkFrame(card_content, fg_color="transparent")
+                detail_stats.pack(fill="x", pady=(5, 0))
+
+                cgl_val = str(row.get('cgl', '—')).strip()
+                if cgl_val in ['nan', 'None', '']: cgl_val = '—'
+
+                csub_val = str(row.get('csub', '—')).strip()
+                if csub_val in ['nan', 'None', '']: csub_val = '—'
+
+                create_stat_box(detail_stats, "قيمة الشيك", format_money(row.get('camt1', 0)), FIB_GREEN)
+                create_stat_box(detail_stats, "المتأخرات", format_money(row.get('camt7', 0)), "#EA580C")
+                create_stat_box(detail_stats, "تاريخ الاستحقاق", cdat1_str, TEXT_DARK)
+                create_stat_box(detail_stats, "أستاذ عام", cgl_val, TEXT_MUTED)
+                create_stat_box(detail_stats, "أستاذ فرعي", csub_val, TEXT_MUTED)
     def setup_sponsors_inquiry_ui(self, parent):
         import pandas as pd
         import customtkinter as ctk
