@@ -1,0 +1,12 @@
+{
+   "database": {
+        "server": "DESKTOP-GN49KBE\\SQLEXPRESS",
+        "db_name": "FIBTest"
+    },
+    "app_settings": {
+        "root_folder": ""
+    },
+    "license_info": {
+        "key": "0E8FF41E6C27C86A-MjAyNy0wNC0wNw==-TUlHTw=="
+    }
+}

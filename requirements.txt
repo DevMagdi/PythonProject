@@ -1,0 +1,9 @@
+pandas
+sqlalchemy
+pyodbc
+openpyxl
+python-dotenv
+Pillow
+python-bidi
+customtkinter
+customtkinter
