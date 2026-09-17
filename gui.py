@@ -1066,7 +1066,7 @@ class FGSApp(customtkinter.CTk):
                 ctk.CTkLabel(box, text=f"{value:,.2f}", font=("Segoe UI", 18, "bold"), text_color=v_color).pack(
                     anchor="center", pady=(0, 10))
 
-            create_stat_box(stats_row, "رصيد المدين", results['iamt19'], FIB_GREEN)
+            create_stat_box(stats_row, "رصيد المدين", abs(results['iamt19']), FIB_GREEN)
             create_stat_box(stats_row, "الكفالات", results['sponsor'], FIB_GOLD)
             create_stat_box(stats_row, "جزء غير مغطي من الضمانات", results['guarantees'], TEXT_DARK)
             create_stat_box(stats_row, "جزء غير مغطي من الاعتمادات", results['credits'], "#0369A1")
