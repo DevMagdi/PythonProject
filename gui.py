@@ -330,42 +330,41 @@ class FGSApp(customtkinter.CTk):
         threading.Thread(target=self.load_history_data, daemon=True).start()
 
     def setup_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0, fg_color=COLOR_WHITE)
+        # 1️⃣ ظبطنا عرض السايد بار لـ 280 عشان يلم الفراغات الزيادة من اليمين والشمال
+        self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0, fg_color=COLOR_WHITE)
         self.sidebar.grid(row=0, column=1, sticky="nsew")
+        self.sidebar.grid_propagate(False)
 
-        # تعديل مهم: حجزنا مساحة للـ menu عشان تتمدد (row 2)، ومساحة لدفع الكارت لتحت (row 10)
         self.sidebar.grid_rowconfigure(2, weight=1)
-        self.sidebar.grid_rowconfigure(10, weight=1)
 
-        # 1. Logo Area (بدون أي تعديل)
+        # 1. Logo Area
         logo_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        logo_frame.grid(row=0, column=0, pady=(30, 20), padx=20, sticky="ew")
+        logo_frame.grid(row=0, column=0, pady=(30, 20), padx=10, sticky="ew")
 
         try:
             img_path = resource_path("logo.png")
             self.logo_image = ctk.CTkImage(
                 light_image=Image.open(img_path),
                 dark_image=Image.open(img_path),
-                size=(180, 50)
+                size=(160, 45)
             )
             ctk.CTkLabel(logo_frame, text="", image=self.logo_image).pack()
         except Exception:
             ctk.CTkLabel(logo_frame, text="FIB SYSTEM", font=("Arial", 20, "bold"), text_color=FIB_GREEN).pack()
 
-        ctk.CTkFrame(self.sidebar, height=2, fg_color=FIB_GOLD).grid(row=1, column=0, sticky="ew", padx=30,
-                                                                     pady=(0, 20))
+        ctk.CTkFrame(self.sidebar, height=2, fg_color=FIB_GOLD).grid(row=1, column=0, sticky="ew", padx=15,
+                                                                     pady=(0, 10))
 
         # ==========================================
-        # 2. Menu Buttons (المنطقة الجديدة للقوائم المنسدلة)
+        # 2. Menu Buttons
         # ==========================================
         self.menu_container = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
-        self.menu_container.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        # 2️⃣ صفرنا الـ padx هنا تماماً عشان الفريم يلصق في أقصى اليمين واليسار بدون أي فراغات
+        self.menu_container.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
 
-        self.sub_menus = {}  # قاموس لحفظ القوائم والزراير عشان الإخفاء والإظهار
+        self.sub_menus = {}
 
-        # 📂 تقدر تضيف هنا كل الشاشات اللي عايزها وهتترسم لوحدها!
         menu_structure = {
-
             "📂 الحسابات العامة": [
                 ("استعلام الحسابات", "nuwairy"),
                 ("أستاذ الحسابات العام", "gl_inquiry"),
@@ -378,14 +377,10 @@ class FGSApp(customtkinter.CTk):
                 ("الاستفسار عن تعليمات عميل", "instructions"),
                 ("الاستفسار عن الكفلاء", "sponsors_inquiry"),
             ],
-            # ▼ ▼ ▼ الجزء الجديد اللي هيتم إضافته ▼ ▼ ▼
             "📄 الشيكات": [
                 ("الشيكات الموقوفة", "stopped_cheques"),
                 ("الشيكات المرفوضة", "rejected_cheques"),
-                #("الاستفسار عن الشيكات المرتدة", "returned_cheques"),
-            ]
-            ,
-            # ▼ ▼ ▼ الجزء الجديد اللي هيتم إضافته ▼ ▼ ▼
+            ],
             "📄 التوظيف": [
                 ("بحث التوظيف المحلي", "local_recruitment"),
                 ("الاستفسار عن الشيكات المرتدة", "returned_cheques"),
@@ -393,14 +388,10 @@ class FGSApp(customtkinter.CTk):
                 ("الاستفسار عن خطابات الضمان", "guarantees"),
                 ("الاستفسار عن عملاء الجدارة الائتمانية", "creditworthiness"),
                 ("الاستفسار عن إجمالي التزامات عميل", "total_liabilities_inquiry"),
-            ]
-            ,
-            # ▼ ▼ ▼ ارباح ومساهمين  ▼ ▼ ▼
+            ],
             "📄 الارباح والمساهمين": [
                 ("الاستفسار الأبجدي عن عملاء مساهمين", "contributing_clients"),
                 ("الاستفسار عن سابقة تعاملات عميل", "client_history"),
-
-
             ]
         }
 
@@ -408,17 +399,17 @@ class FGSApp(customtkinter.CTk):
             self.create_collapsible_menu(category, items)
 
         # ==========================================
-        # 🆔 ACTIVATION & LICENSE CARD (بدون أي تعديل)
+        # 🆔 ACTIVATION & LICENSE CARD
         # ==========================================
-        status_color = FIB_GREEN if self.lic_data.get("active") else COLOR_RED_ALERT
-        status_text = "ACTIVE LICENSE" if self.lic_data.get("active") else "INACTIVE / DEMO"
+        status_color = FIB_GREEN if getattr(self, 'lic_data', {}).get("active") else COLOR_RED_ALERT
+        status_text = "ACTIVE LICENSE" if getattr(self, 'lic_data', {}).get("active") else "INACTIVE / DEMO"
 
         info_card = ctk.CTkFrame(self.sidebar, fg_color="#F8F9FA", corner_radius=10, border_width=1,
                                  border_color="#E0E0E0")
-        info_card.grid(row=11, column=0, padx=15, pady=20, sticky="ew")
+        info_card.grid(row=11, column=0, padx=10, pady=(10, 5), sticky="ew")
 
         status_row = ctk.CTkFrame(info_card, fg_color="transparent")
-        status_row.pack(fill="x", padx=10, pady=15)
+        status_row.pack(fill="x", padx=10, pady=8)
 
         self.lbl_dot = ctk.CTkLabel(status_row, text="●", font=("Arial", 16), text_color=status_color)
         self.lbl_dot.pack(side="left")
@@ -431,46 +422,45 @@ class FGSApp(customtkinter.CTk):
         self.lbl_status_text.bind("<Double-1>", lambda e: self.show_admin_activation_popup())
         self.lbl_dot.bind("<Double-1>", lambda e: self.show_admin_activation_popup())
 
-        # Footer (بدون أي تعديل)
+        # Footer
         ctk.CTkLabel(self.sidebar, text="v2.1 Enterprise © FGS", font=("Arial", 9), text_color="#CCC").grid(
             row=12, column=0, pady=(0, 10)
         )
 
     def create_collapsible_menu(self, category_text, items):
-        # حاوية رئيسية لكل قسم
+        # حاوية رئيسية لكل قسم (بدون هوامش يمين)
         category_container = ctk.CTkFrame(self.menu_container, fg_color="transparent")
-        category_container.pack(fill="x", pady=3)
+        category_container.pack(fill="x", pady=2, padx=5)
 
-        # الفريم اللي جواه الشاشات الفرعية (هيكون مخفي في الأول)
         sub_frame = ctk.CTkFrame(category_container, fg_color="transparent")
         self.sub_menus[category_text] = sub_frame
 
-        # الزرار الرئيسي (زي "الحسابات العامة")
+        # الزرار الرئيسي
         main_btn = ctk.CTkButton(
             category_container,
-            text=category_text + "  ◀",  # 1. السهم بقى بعد النص وشكله باصص للشمال
+            text=f"{category_text} ◀",
             font=("Segoe UI", 13, "bold"),
-            anchor="e",  # 2. المحاذاة بقت لليمين (East)
+            anchor="e",
             fg_color="#E2E8F0", text_color="#333333", hover_color="#CBD5E1",
-            height=35, corner_radius=6,
+            height=34, corner_radius=6,
             command=lambda c=category_text: self.toggle_menu(c)
         )
-        main_btn.pack(fill="x", padx=2, pady=2)
+        main_btn.pack(fill="x", padx=0, pady=2)
         self.sub_menus[f"{category_text}_btn"] = main_btn
 
-        # إنشاء الزراير الفرعية (زي "استعلام الحسابات")
+        # إنشاء الزراير الفرعية للشاشات
         for text, page_name in items:
             sub_btn = ctk.CTkButton(
                 sub_frame,
-                text=text + "  ",  # ضفنا مساحة بعد النص
-                font=("Segoe UI", 12),
-                anchor="e",  # 3. المحاذاة لليمين
-                fg_color="transparent", text_color="#555555", hover_color="#F0F9F4",
+                text=text,
+                font=("Segoe UI", 11, "bold"),  # صغرنا الخط سكة بسيطة عشان الكلام الطويل يفرش براحته ومايتقصش
+                anchor="e",  # المحاذاة لليمين تماماً
+                fg_color="transparent", text_color="#475569", hover_color="#F0F9F4",
                 height=30, corner_radius=6,
                 command=lambda p=page_name: self.show_page(p)
             )
-            # 4. عكسنا الـ padx عشان المسافة الفاضية (الإزاحة) تكون من ناحية اليمين (5 من الشمال، 25 من اليمين)
-            sub_btn.pack(fill="x", padx=(5, 25), pady=1)
+            # 3️⃣ التعديل الجذري هنا: خلير الـ padx عبارة عن (0, 5) عشان الزرار يلزق في أقصى اليمين ومش يسيب مسافة ضخمة
+            sub_btn.pack(fill="x", padx=(0, 5), pady=1)
 
             setattr(self, f"btn_{page_name}", sub_btn)
 
@@ -481,11 +471,9 @@ class FGSApp(customtkinter.CTk):
 
         if sub_frame.winfo_ismapped():
             sub_frame.pack_forget()
-            # السهم المقفول باصص شمال ◀
             btn.configure(text=current_text.replace("▼", "◀"))
         else:
             sub_frame.pack(fill="x")
-            # السهم المفتوح باصص تحت ▼
             btn.configure(text=current_text.replace("◀", "▼"))
 
     def show_admin_activation_popup(self):
@@ -496,17 +484,15 @@ class FGSApp(customtkinter.CTk):
         popup = ctk.CTkToplevel(self)
         popup.title("Admin License Manager - Secret")
         popup.geometry("450x250")
-        popup.attributes("-topmost", True)  # الشاشة دي هتبقى فوق كل حاجة
+        popup.attributes("-topmost", True)
         popup.resizable(False, False)
 
         ctk.CTkLabel(popup, text="Enter New Activation Key:", font=("Segoe UI", 14, "bold")).pack(pady=(25, 10))
 
-        # مربع الكود
         ent_key = ctk.CTkEntry(popup, width=350, justify="center", font=("Consolas", 12))
         ent_key.pack(pady=10)
 
-        # عرض الـ Machine ID للأدمن عشان لو هتعمل جنريت لكود جديد
-        mid = self.lic_data.get("mid", "UNKNOWN")
+        mid = getattr(self, 'lic_data', {}).get("mid", "UNKNOWN")
         ctk.CTkLabel(popup, text=f"Machine ID: {mid}", font=("Segoe UI", 10), text_color="gray").pack()
 
         def do_activate():
@@ -515,38 +501,21 @@ class FGSApp(customtkinter.CTk):
                 messagebox.showwarning("تنبيه", "Please paste the key first.")
                 return
 
-            # بنخلي البرنامج يقرا من المربع الجديد ده بدل المربع القديم اللي شلناه
             self.ent_lic_key = ent_key
-            self.on_activate_click()  # تشغيل دالة التفعيل بتاعتك الأساسية
+            self.on_activate_click()
 
-            # لو التفعيل نجح، الواجهة تتحدث لـ أخضر والشاشة دي تتقفل
             if hasattr(self, 'lic_data') and self.lic_data.get("active"):
-                self.lbl_dot.configure(text_color="#00563B")  # لون FIB_GREEN
+                self.lbl_dot.configure(text_color="#00563B")
                 self.lbl_status_text.configure(text="ACTIVE LICENSE", text_color="#00563B")
                 popup.destroy()
 
         ctk.CTkButton(
             popup,
             text="Verify & Activate",
-            fg_color="#C5A059",  # لون FIB_GOLD
+            fg_color="#C5A059",
             hover_color="#B58B00",
             command=do_activate
         ).pack(pady=20)
-
-    def create_nav_btn(self, text, row, page_name):
-        btn = ctk.CTkButton(
-            self.sidebar, text=text,
-            font=("Segoe UI", 11,"bold"),  # 1️⃣ صغرنا الخط من 14 لـ 12
-            anchor="w",
-            fg_color="transparent",
-            text_color=COLOR_TEXT_MAIN,
-            hover_color="#F0F9F4",
-            height=22,  # 2️⃣ صغرنا ارتفاع الزرار من 50 لـ 32
-            corner_radius=6,  # (اختياري) صغرنا الكيرف شوية عشان يليق مع الحجم الصغير
-            command=lambda: self.show_page(page_name)
-        )
-        btn.grid(row=row, column=0, sticky="ew", padx=10, pady=2)  # 3️⃣ قللنا الـ pady من 5 لـ 2 عشان يقربوا من بعض
-        return btn
 
     def setup_pages(self):
         # الحاوية الرئيسية اللي بتتعرض فيها الشاشات
