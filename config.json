@@ -1,6 +1,6 @@
 {
     "database": {
-        "server": "DESKTOP-A0QINRF\\MSSQLSERVERTEST",
+        "server": "DESKTOP-7PMVUF2",
         "db_name": "FIBTest",
         "user": "fgs",
         "password": "123456"
