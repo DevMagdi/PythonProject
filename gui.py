@@ -1,22 +1,44 @@
-import tempfile
-
-import customtkinter as ctk
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import threading
+import getpass
+from tkinter import ttk
 import json
-import os
 import sys
-import datetime
-from PIL import Image
-from sqlalchemy import text
+import tkinter as tk
 
+import arabic_reshaper
+import customtkinter
+import pandas as pd
+import threading
+import logging
+
+import xlsxwriter
+from tksheet import Sheet
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
+from datetime import datetime
+import re
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
+from bidi.algorithm import get_display
+from PIL import Image
+import tempfile
+from access_migrator import AccessToSQL
+from etl import ETLOrchestrator
+from sqlalchemy import text
 from database import DatabaseEngine
 from utils import EnterpriseLogger
-
+import csv
+import time
+import datetime
 # محاولة استدعاء pandas لتصدير الإكسل
 try:
-    import pandas as pd
 
     HAS_PANDAS = True
 except ImportError:
@@ -54,21 +76,16 @@ def resource_path(relative_path):
 my_logo_path = resource_path("logo.png")
 my_font_path = resource_path("Amiri-Regular.ttf")
 
-
 def get_config_path(filename="config.json"):
     """
     دالة ذكية لتحديد مسار حفظ الإعدادات متوافقة مع Nuitka.
     """
-    import sys
-    import os
-
     if getattr(sys, 'frozen', False) or '__compiled__' in globals():
         application_path = os.path.dirname(os.path.abspath(sys.argv[0]))
     else:
         application_path = os.path.dirname(os.path.abspath(__file__))
 
     return os.path.join(application_path, filename)
-
 
 def get_resource_path(filename):
     """
@@ -79,11 +96,6 @@ def get_resource_path(filename):
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, filename)
-
-
-import customtkinter as ctk
-import tkinter as tk
-
 
 class PremiumSearchPopup(ctk.CTkToplevel):
     def __init__(self, parent, title, data_list, callback):
@@ -225,16 +237,8 @@ class PremiumSearchPopup(ctk.CTkToplevel):
     def select_item(self, selected_val):
         self.callback(selected_val)
         self.destroy()
-import customtkinter  # <--- هذا السطر هو الحل
-import tkinter as tk
-from license_guard import LicenseGuard  # (اللي ضفناه المرة اللي فاتت)
 
 class FGSApp(customtkinter.CTk):
-    import sys
-    import threading
-    import tkinter as tk
-    import customtkinter as ctk
-    from PIL import Image
 
     # افترضت وجود استدعاءاتك السابقة هنا للثوابت والدوال (COLOR_BG, FIB_GREEN, etc.)
 
@@ -399,9 +403,11 @@ class FGSApp(customtkinter.CTk):
                 ("الاستفسار عن أرصدة العلاج الطبي للموظفين", "medical_balances_inquiry"),
                 ("الاستفسار عن حركة فواتير العلاج الطبي", "medical_bills_movement"),
             ],
-            "الاجازات": [
+            "الاجازات والاستحقاقات": [
                 ("الاستفسار عن إجازات الموظف السابقة", "previous_leaves_inquiry"),
                 ("الاستفسار عن اجمالي إجازات الموظف السابقة", "leaves_movement"),
+                ("الاستخقاقات - تسجيل البيانات الاساسية للموظفين", "entitlements_basic_data"),
+
             ]
         }
 
@@ -488,9 +494,6 @@ class FGSApp(customtkinter.CTk):
 
     def show_admin_activation_popup(self):
         """نافذة سرية للمدير لتفعيل الرخصة بتفتح بالدبل كليك"""
-        import customtkinter as ctk
-        import tkinter.messagebox as messagebox
-
         popup = ctk.CTkToplevel(self)
         popup.title("Admin License Manager - Secret")
         popup.geometry("450x250")
@@ -612,7 +615,9 @@ class FGSApp(customtkinter.CTk):
         # 24. الاستفسار عن اجمالي إجازات الموظف السابقة 🏖️
         self.page_leaves_movement = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.setup_leaves_movement_ui(self.page_leaves_movement)
-
+        # 25. الاستحقاقات - البيانات الأساسية للموظفين 📋️
+        self.page_entitlements_basic_data = ctk.CTkFrame(self.content_area, fg_color="transparent")
+        self.setup_entitlements_basic_data_ui(self.page_entitlements_basic_data)
 
     def show_page(self, name):
         if hasattr(self, 'sys_logger'):
@@ -644,6 +649,7 @@ class FGSApp(customtkinter.CTk):
             getattr(self, 'medical_bills_movement', None),
             getattr(self, 'previous_leaves_inquiry', None),
             getattr(self, 'leaves_movement', None),
+            getattr(self, 'entitlements_basic_data', None),
         ]
         for p in pages_to_hide:
             if p is not None:
@@ -675,6 +681,7 @@ class FGSApp(customtkinter.CTk):
             getattr(self, 'medical_bills_movement', None),
             getattr(self, 'previous_leaves_inquiry', None),
             getattr(self, 'leaves_movement', None),
+            getattr(self, 'entitlements_basic_data', None),
         ]
         for b in buttons_to_reset:
             if b is not None:
@@ -852,13 +859,282 @@ class FGSApp(customtkinter.CTk):
                 self.page_leaves_movement.pack(fill="both", expand=True)
             if hasattr(self, 'btn_leaves_movement'):
                 self.btn_leaves_movement.configure(fg_color=FIB_GREEN, text_color="white")
+        elif name == "entitlements_basic_data":
+            if hasattr(self, 'page_entitlements_basic_data'):
+                self.page_entitlements_basic_data.pack(fill="both", expand=True)
+            if hasattr(self, 'btn_entitlements_basic_data'):
+                self.btn_entitlements_basic_data.configure(fg_color=FIB_GREEN, text_color="white")
+
+    def setup_entitlements_basic_data_ui(self, parent):
+        # =========================================
+        # 🎨 الألوان والتنسيقات المعتمدة (Premium Grid)
+        # =========================================
+        FIB_GREEN = "#005C34"
+        FIB_GOLD = "#C5A059"
+        BG_MAIN = "#F8FAFC"
+        CARD_BG = "#FFFFFF"
+        BOX_BG = "#F1F5F9"
+        TEXT_DARK = "#0F172A"
+        TEXT_MUTED = "#64748B"
+
+        MAIN_FONT = "Arial"
+
+        main_container = ctk.CTkFrame(parent, fg_color=BG_MAIN)
+        main_container.pack(fill="both", expand=True)
+
+        header = ctk.CTkFrame(main_container, fg_color=FIB_GREEN, height=55, corner_radius=0)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        ctk.CTkFrame(main_container, fg_color=FIB_GOLD, height=3, corner_radius=0).pack(fill="x")
+
+        ctk.CTkLabel(
+            header, text="الاستحقاقات - البيانات الأساسية للموظفين 📋",
+            font=(MAIN_FONT, 20, "bold"), text_color=CARD_BG
+        ).pack(side="right", padx=25, pady=12)
+
+        # =========================================
+        # 🔍 منطقة البحث
+        # =========================================
+        search_frame = ctk.CTkFrame(main_container, fg_color=CARD_BG, corner_radius=12, border_width=1,
+                                    border_color="#E2E8F0")
+        search_frame.pack(fill="x", padx=15, pady=10)
+
+        search_inner = ctk.CTkFrame(search_frame, fg_color="transparent")
+        search_inner.pack(side="right", fill="y", padx=15, pady=10)
+
+        btn_clear = ctk.CTkButton(search_inner, text="🧹 مسح", font=(MAIN_FONT, 13, "bold"), fg_color="#64748B",
+                                  hover_color="#475569", width=80, height=36, corner_radius=6,
+                                  command=lambda: clear_search())
+        btn_clear.pack(side="left", padx=(8, 12))
+
+        btn_search = ctk.CTkButton(search_inner, text="🔍 بحث", font=(MAIN_FONT, 14, "bold"), fg_color=FIB_GREEN,
+                                   hover_color="#004426", width=100, height=36, corner_radius=6,
+                                   command=lambda: execute_search())
+        btn_search.pack(side="left", padx=8)
+
+        self.ent_basic_data_file_no = ctk.CTkEntry(search_inner, font=(MAIN_FONT, 15, "bold"), justify="center",
+                                                   placeholder_text="رقم الملف...", width=180, height=36,
+                                                   border_color="#CBD5E1")
+        self.ent_basic_data_file_no.pack(side="left", padx=12)
+        ctk.CTkLabel(search_inner, text="رقم الملف:", font=(MAIN_FONT, 14, "bold"), text_color=TEXT_DARK).pack(
+            side="left", padx=(12, 4))
+
+        # فريم النتائج الثابت (بدون سكرول)
+        self.basic_data_results_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+        self.basic_data_results_frame.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+
+        # =========================================
+        # ⚙️ إعدادات الأحداث ودوال المساعدة (محدثة لضمان عرض الداتا)
+        # =========================================
+        self.ent_basic_data_file_no.bind("<Return>", lambda event: execute_search())
+
+        def clear_search():
+            self.ent_basic_data_file_no.delete(0, 'end')
+            for widget in self.basic_data_results_frame.winfo_children():
+                widget.destroy()
+
+        def safe_str(val):
+            if pd.isna(val): return "—"
+            val_str = str(val).strip()
+            if val_str.lower() in ['', 'nan', 'none', 'nat']: return "—"
+            try:
+                if float(val).is_integer():
+                    return str(int(float(val)))
+            except:
+                pass
+            return val_str
+
+        def format_date(val):
+            if pd.isna(val): return "—"
+            val_str = str(val).strip()
+            if val_str.lower() in ['', 'nan', 'none', 'nat']: return "—"
+            try:
+                return pd.to_datetime(val).strftime('%Y-%m-%d')
+            except:
+                return val_str
+
+        # =========================================
+        # 🚀 تنفيذ الاستعلام فائق السرعة
+        # =========================================
+        def execute_search():
+            file_no = self.ent_basic_data_file_no.get().strip()
+
+            if not file_no:
+                messagebox.showwarning("تنبيه", "يرجى إدخال رقم الملف")
+                return
+
+            for widget in self.basic_data_results_frame.winfo_children():
+                widget.destroy()
+
+            ctk.CTkLabel(self.basic_data_results_frame, text="⚡ جاري جلب البيانات الأساسية...",
+                         font=(MAIN_FONT, 15, "bold"), text_color=FIB_GOLD).pack(pady=40)
+
+            def fetch_data():
+                try:
+                    engine = getattr(self, '_get_db_connection', lambda: None)()
+                    if not engine:
+                        raise Exception("لا يوجد اتصال بقاعدة البيانات.")
+
+                    # الاستعلام مبني على TOP 1 و NOLOCK للسرعة القصوى
+                    query = """
+                            SELECT TOP 1 
+                            PNAME, PBR, \
+                                   PADM, \
+                                   PJOB, \
+                                   PCOD, \
+                                   PCLNT, \
+                                   PDATH, \
+                                   PDATM1,
+                                   PCOD1, \
+                                   PDATMM, \
+                                   PBAH1, \
+                                   PDAT1, \
+                                   PBAH2, \
+                                   PDAT2,
+                                   PCOD2, \
+                                   PCOD3, \
+                                   PCOD4, \
+                                   PDAY
+                            FROM [dbo].[TBL_Entitlements] \
+                            WITH (NOLOCK)
+                            WHERE PDOC = ? \
+                            """
+                    df_data = pd.read_sql(query, engine, params=(file_no,))
+
+                    if df_data.empty:
+                        self.after(0, lambda: update_results_ui(None, file_no,
+                                                                error="لم يتم العثور على بيانات لرقم الملف المدخل."))
+                        return
+
+                    row = df_data.iloc[0]
+
+                    # 🛠️ معالجة الاسم وتنظيفه
+                    raw_name = str(row.get('PNAME', '')).strip()
+                    if raw_name.lower() in ['nan', '', 'none']:
+                        emp_name = "غير مدرج"
+                    else:
+                        emp_name = raw_name
+                        prefixes = ['عبد', 'ابو', 'أبو', 'ابن', 'بن', 'الدين', 'الله', 'جلال']
+                        for p in prefixes:
+                            emp_name = re.sub(rf'({p})([أ-ي])', r'\1 \2', emp_name)
+                        emp_name = " ".join(emp_name.split())
+
+                    # 🛠️ مطابقة الفرع
+                    pbr = str(row.get('PBR', '')).strip()
+                    branch_name = pbr
+                    if pbr and pbr.lower() not in ['nan', 'none', '']:
+                        query_branch = "SELECT branchname FROM [dbo].[tbl_branches] WITH (NOLOCK) WHERE branchcode = ?"
+                        df_branch = pd.read_sql(query_branch, engine, params=(pbr,))
+                        if not df_branch.empty:
+                            branch_name = str(df_branch.iloc[0]['branchname']).strip()
+
+                    emp_data = {
+                        'name': emp_name,
+                        'branch': branch_name,
+                        'PADM': safe_str(row.get('PADM')),
+                        'PJOB': safe_str(row.get('PJOB')),
+                        'PCOD': safe_str(row.get('PCOD')),
+                        'PCLNT': safe_str(row.get('PCLNT')),
+                        'PDATH': safe_str(row.get('PDATH')),
+                        'PDATM1': format_date(row.get('PDATM1')),
+                        'PCOD1': safe_str(row.get('PCOD1')),
+                        'PDATMM': format_date(row.get('PDATMM')),
+                        'PBAH1': safe_str(row.get('PBAH1')),
+                        'PDAT1': safe_str(row.get('PDAT1')),
+                        'PBAH2': safe_str(row.get('PBAH2')),
+                        'PDAT2': safe_str(row.get('PDAT2')),
+                        'PCOD2': safe_str(row.get('PCOD2')),
+                        'PCOD3': safe_str(row.get('PCOD3')),
+                        'PCOD4': safe_str(row.get('PCOD4')),
+                        'PDAY': safe_str(row.get('PDAY'))
+                    }
+
+                    self.after(0, lambda d=emp_data, f=file_no: update_results_ui(d, f))
+                except Exception as e:
+                    err_msg = str(e)
+                    logging.error(f"Error fetching basic data: {err_msg}")
+                    self.after(0, lambda err=err_msg: update_results_ui(None, file_no, error=err))
+
+            threading.Thread(target=fetch_data, daemon=True).start()
+
+        # =========================================
+        # 📑 عرض الواجهة (باستخدام نظام Grid الهندسي الجديد)
+        # =========================================
+        def update_results_ui(emp_data, file_no, error=None):
+            for widget in self.basic_data_results_frame.winfo_children():
+                widget.destroy()
+
+            if error:
+                ctk.CTkLabel(self.basic_data_results_frame, text=f"❌ {error}", font=(MAIN_FONT, 14, "bold"),
+                             text_color="#EF4444").pack(pady=30)
+                return
+
+            if not emp_data:
+                return
+
+            # ==================== كارت معلومات الموظف ====================
+            header_card = ctk.CTkFrame(self.basic_data_results_frame, fg_color=CARD_BG, corner_radius=10,
+                                       border_width=1, border_color="#CBD5E1", height=60)
+            header_card.pack(fill="x", padx=10, pady=(0, 10))
+            header_card.pack_propagate(False)
+
+            top_row = ctk.CTkFrame(header_card, fg_color="transparent")
+            top_row.pack(fill="both", expand=True, padx=20)
+
+            ctk.CTkLabel(top_row, text=f"{emp_data['name']}", font=(MAIN_FONT, 17, "bold"), text_color=TEXT_DARK).pack(
+                side="right", pady=15)
+            ctk.CTkLabel(top_row, text="👤", font=(MAIN_FONT, 16)).pack(side="right", padx=(0, 6), pady=15)
+
+            info_tags = ctk.CTkFrame(top_row, fg_color="transparent")
+            info_tags.pack(side="left", pady=15)
+
+            ctk.CTkLabel(info_tags, text=f"{file_no} :رقم الملف", font=(MAIN_FONT, 13, "bold"), text_color=FIB_GOLD,
+                         fg_color=BOX_BG, corner_radius=6).pack(side="left", padx=6, ipadx=10, ipady=3)
+            ctk.CTkLabel(info_tags, text=f"الفرع: {emp_data['branch']}", font=(MAIN_FONT, 13, "bold"),
+                         text_color=TEXT_MUTED, fg_color=BOX_BG, corner_radius=6).pack(side="left", padx=6, ipadx=10,
+                                                                                       ipady=3)
+
+            # ==================== شبكة البيانات (نظام Grid لمنع قطع الشاشة) ====================
+            grid_container = ctk.CTkFrame(self.basic_data_results_frame, fg_color="transparent")
+            grid_container.pack(fill="both", expand=True, padx=5, pady=0)
+
+            # تهيئة الـ Grid ليكون 4 صفوف و 4 أعمدة بحجم متساوي تماماً
+            for i in range(4):
+                grid_container.grid_rowconfigure(i, weight=1, uniform="row")
+                grid_container.grid_columnconfigure(i, weight=1, uniform="col")
+
+            # مصفوفة الحقول (4 صفوف × 4 أعمدة) - الترتيب من اليمين لليسار برمجياً
+            fields_layout = [
+                [("الإدارة", emp_data['PADM']), ("مستوى وظيفي جديد", emp_data['PJOB']),
+                 ("كود الوظيفة", emp_data['PCOD']), ("رقم الحساب", emp_data['PCLNT'])],
+                [("تاريخ الميلاد", emp_data['PDATMM']), ("ت. التعيين - هجري", emp_data['PDATH']),
+                 ("الحالة الاجتماعية", emp_data['PCOD1']), ("المدة الاعتبارية", emp_data['PDAY'])],
+                [("المؤهل الدراسي 1", emp_data['PBAH1']), ("سنة الحصول عليه", emp_data['PDAT1']),
+                 ("المؤهل الدراسي 2", emp_data['PBAH2']), ("سنة الحصول عليه", emp_data['PDAT2'])],
+                [("ت. اشتراك ن/خ - م", emp_data['PDATM1']), ("كود اشتراك ن/خ", emp_data['PCOD2']),
+                 ("كود اشتراك نقابة", emp_data['PCOD3']), ("كود استثناء حد/ق", emp_data['PCOD4'])]
+            ]
+
+            # رسم الشبكة بانتظام تام
+            for r_idx, row_data in enumerate(fields_layout):
+                for c_idx, (title, val) in enumerate(row_data):
+                    # لحساب العمود الصحيح من اليمين لليسار (RTL Layout)
+                    actual_col = 3 - c_idx
+
+                    box = ctk.CTkFrame(grid_container, fg_color=CARD_BG, corner_radius=10, border_width=1,
+                                       border_color="#E2E8F0")
+                    box.grid(row=r_idx, column=actual_col, sticky="nsew", padx=5, pady=5)
+
+                    # حاوية داخلية لضمان توسيط النصوص مهما كان حجم الشاشة
+                    inner_box = ctk.CTkFrame(box, fg_color="transparent")
+                    inner_box.pack(expand=True)
+
+                    ctk.CTkLabel(inner_box, text=title, font=(MAIN_FONT, 12, "bold"), text_color=TEXT_MUTED).pack(
+                        pady=(0, 4))
+                    ctk.CTkLabel(inner_box, text=val, font=(MAIN_FONT, 16, "bold"), text_color=TEXT_DARK).pack(
+                        pady=(4, 0))
     def setup_previous_leaves_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -1090,14 +1366,8 @@ class FGSApp(customtkinter.CTk):
             create_stat_box(row2, "إجمالي إجازة مرضي (PTMNO)", f"{emp_data['ptmno']:g} يوم", "#0369A1")
             create_stat_box(row2, "إجمالي بدون مرتب (PTBNO)", f"{emp_data['ptbno']:g} يوم", "#DC2626")
             create_stat_box(row2, "إجمالي إجازة إيقاف (PTENO)", f"{emp_data['pteno']:g} يوم", TEXT_MUTED)
-
     def setup_leaves_movement_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
+
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة (Compact & Premium)
@@ -1361,11 +1631,6 @@ class FGSApp(customtkinter.CTk):
                                                                                                            column=i,
                                                                                                            pady=6)
     def setup_medical_bills_movement_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -1659,11 +1924,6 @@ class FGSApp(customtkinter.CTk):
                                                                                                             column=i,
                                                                                                             pady=8)
     def setup_medical_balances_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -1875,12 +2135,6 @@ class FGSApp(customtkinter.CTk):
             create_stat_box(row3, "رصيد العلاج الأسري (PEAMTB)", f"{peamtb:,.2f}", TEXT_DARK)
             create_stat_box(row3, "الباقي", f"{remaining:,.2f} دائن", "#DC2626")  # تم إضافة كلمة "دائن" هنا
     def setup_alphabetical_employees_families_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -2056,11 +2310,6 @@ class FGSApp(customtkinter.CTk):
                 ctk.CTkLabel(inner_row, text=f"👤 {formatted_name}", font=("Segoe UI", 18, "bold"),
                              text_color=TEXT_DARK).pack(side="right")
     def setup_customer_collaterals_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -2337,11 +2586,6 @@ class FGSApp(customtkinter.CTk):
                 ctk.CTkLabel(p3, text=f"اسم الخبير (GNM1): {row.get('GNM1', '—')}", font=("Segoe UI", 13)).pack(
                     anchor="e", pady=2)
     def setup_total_liabilities_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -2594,11 +2838,6 @@ class FGSApp(customtkinter.CTk):
             create_stat_box(stats_row, "جزء غير مغطي من الضمانات", results['guarantees'], TEXT_DARK)
             create_stat_box(stats_row, "جزء غير مغطي من الاعتمادات", results['credits'], "#0369A1")
     def setup_client_history_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -2848,12 +3087,6 @@ class FGSApp(customtkinter.CTk):
             create_stat_box(stats_row, "إجمالي المتأخرات (IAMT21)", iamt21_sum, "#DC2626")
             create_stat_box(stats_row, "الإجمالي العام", total_sum, FIB_GOLD)
     def setup_alphabetical_contributors_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -3147,12 +3380,6 @@ class FGSApp(customtkinter.CTk):
 
             threading.Thread(target=fetch_data, daemon=True).start()
     def setup_creditworthiness_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 الألوان والتنسيقات المعتمدة
@@ -3445,12 +3672,6 @@ class FGSApp(customtkinter.CTk):
             create_stat_box(stage3_frame, "تاريخ التجنيب (3)", format_date(row.get('IDAT3')), TEXT_DARK)
             create_stat_box(stage3_frame, "المبلغ المجنب (IAMTY)", format_money(row.get('IAMTY')), TEXT_DARK)
     def setup_guarantees_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import datetime
 
         # =========================================
         # 🎨 الألوان والتنسيقات
@@ -3760,11 +3981,6 @@ class FGSApp(customtkinter.CTk):
                                   "#DC2626")  # أحمر للتنبيه
                 create_detail_box(row2, "كود تحصيل الغطاء (LGCVRP)", row.get('LGCVRP', '—'), TEXT_MUTED)
     def setup_defaulting_client_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 الألوان والتنسيقات (نفس الثيم المعتمد)
@@ -4033,12 +4249,6 @@ class FGSApp(customtkinter.CTk):
             create_stat_box(fin_row3, "عائد البنك للعمليات (damt2)", format_money(row.get('damt2', 0)), FIB_GREEN)
             create_stat_box(fin_row3, "تمويل البنك للعمليات (damt1)", format_money(row.get('damt1', 0)), TEXT_DARK)
     def setup_returned_cheques_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 الألوان والتنسيقات
@@ -4400,12 +4610,6 @@ class FGSApp(customtkinter.CTk):
                 create_stat_box(detail_stats, "أستاذ عام", cgl_val, TEXT_MUTED)
                 create_stat_box(detail_stats, "أستاذ فرعي", csub_val, TEXT_MUTED)
     def setup_sponsors_inquiry_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 1. Theme Colors
@@ -4745,12 +4949,6 @@ class FGSApp(customtkinter.CTk):
                 ctk.CTkLabel(box2, text=row.get('fclntm', '—'), font=("Segoe UI", 16, "bold"),
                              text_color=FIB_GOLD).pack(anchor="center", pady=(0, 6))
     def setup_local_recruitment_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 1. Theme Colors & Styles
@@ -5091,12 +5289,6 @@ class FGSApp(customtkinter.CTk):
                 create_info_box(data_grid, 1, "رصيد متناقص", abs(float(row.get('IAMT20', 0) or 0)), val_color=FIB_GOLD)
                 create_info_box(data_grid, 0, "متأخرات", abs(float(row.get('IAMT21', 0) or 0)), val_color="#DC2626")
     def setup_instructions_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 1. Premium Theme Colors
@@ -5550,12 +5742,6 @@ class FGSApp(customtkinter.CTk):
                     corner_radius=6
                 ).pack(side="left", ipadx=10, ipady=2)
     def setup_mandates_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
-        import re
 
         # =========================================
         # 🎨 1. Premium Theme Colors
@@ -5901,11 +6087,6 @@ class FGSApp(customtkinter.CTk):
                 print(f"Sheet update error: {e}")
 
     def setup_stopped_cheques_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 1. Premium Theme Colors
@@ -6003,7 +6184,6 @@ class FGSApp(customtkinter.CTk):
         self.stopped_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
 
         def fix_arabic_name(raw_name):
-            import re
             if pd.isna(raw_name) or not str(raw_name).strip():
                 return "غير مسجل"
             text = str(raw_name).strip()
@@ -6236,9 +6416,6 @@ class FGSApp(customtkinter.CTk):
         self.rej_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
 
         def fix_arabic_name(raw_name):
-            import re
-            import pandas as pd
-
             if pd.isna(raw_name) or not str(raw_name).strip():
                 return "غير مسجل"
 
@@ -6408,11 +6585,6 @@ class FGSApp(customtkinter.CTk):
                 create_info_box(data_grid, 0, 0, "رصيد الحساب", f"{balance} EGP", val_color=TEXT_DARK)
 
     def setup_client_balances_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 1. الألوان والتنسيق
@@ -6730,11 +6902,6 @@ class FGSApp(customtkinter.CTk):
                 create_info_box(data_grid, 0, "كود الحساب (PGL)", pgl_code)
 
     def setup_cancelled_certs_ui(self, parent):
-        import pandas as pd
-        import customtkinter as ctk
-        from tkinter import messagebox
-        import threading
-        import logging
 
         # =========================================
         # 🎨 1. Premium Theme Colors
@@ -6829,7 +6996,6 @@ class FGSApp(customtkinter.CTk):
         self.canc_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
 
         def fix_arabic_name(raw_name):
-            import re
             if pd.isna(raw_name) or not str(raw_name).strip():
                 return "غير مسجل"
             text = str(raw_name).strip()
@@ -7262,8 +7428,6 @@ class FGSApp(customtkinter.CTk):
         # ==========================================
 
     def _init_nuwairy_sheet(self, parent):
-        from tksheet import Sheet
-
         self.sheet = Sheet(
             parent,
             show_x_scrollbar=True,
@@ -7301,7 +7465,6 @@ class FGSApp(customtkinter.CTk):
         self.sheet.pack(fill="both", expand=True)
 
     def setup_nuwairy_ui(self, parent):
-        import customtkinter as ctk
 
         # =========================
         # Page Wrapper
@@ -7581,7 +7744,6 @@ class FGSApp(customtkinter.CTk):
         """تحميل القائمة وتخزينها في الذاكرة لتعمل مع الـ Premium Popup"""
 
         def fetch_task():
-            import pandas as pd
             try:
                 engine = self._get_db_connection()
                 query = "SELECT snmsubb FROM [dbo].[TBL_GL_Codes] WHERE snmsubb IS NOT NULL AND snmsubb != ''"
@@ -7600,8 +7762,6 @@ class FGSApp(customtkinter.CTk):
                 if hasattr(self, 'sys_logger'):
                     self.sys_logger.log(f"❌ خطأ أثناء تحميل أكواد الأستاذ العام: {e}", "ERROR")
                 self.all_gl_codes = ["- خطأ في الاتصال بقاعدة البيانات -"]
-
-        import threading
         threading.Thread(target=fetch_task, daemon=True).start()
 
     def filter_gl_codes(self, event):
@@ -7628,7 +7788,6 @@ class FGSApp(customtkinter.CTk):
         self.combo_gl_acc.configure(values=filtered_codes)
     def gl_load_currencies(self):
         def fetch_task():
-            import pandas as pd
             try:
                 # استخدام دالة الاتصال الجاهزة بتاعتك
                 engine = self._get_db_connection()
@@ -7651,13 +7810,9 @@ class FGSApp(customtkinter.CTk):
                 if hasattr(self, 'combo_gl_currency'):
                     self.after(0, lambda: self.combo_gl_currency.configure(values=["- خطأ في الاتصال -"]))
                     self.after(0, lambda: self.combo_gl_currency.set("- خطأ في الاتصال -"))
-
-        import threading
         threading.Thread(target=fetch_task, daemon=True).start()
 
     def _init_gl_sheet(self, parent):
-        from tksheet import Sheet
-
         self.gl_sheet = Sheet(
             parent,
             show_x_scrollbar=True,
@@ -7697,9 +7852,6 @@ class FGSApp(customtkinter.CTk):
         self.gl_sheet.pack(fill="both", expand=True)
 
     def setup_gl_inquiry_ui(self, parent):
-
-        import customtkinter as ctk
-
         # =========================
         # Page Wrapper
         # =========================
@@ -8039,12 +8191,6 @@ class FGSApp(customtkinter.CTk):
             self.sys_logger.log("🧹 المستخدم قام بمسح فلاتر بحث الأستاذ العام وإفراغ الجدول.")
 
     def gl_export_excel(self):
-        from tkinter import filedialog, messagebox
-        from datetime import datetime
-        import re
-        import os
-        import sys
-
         # ==========================================
         # 1. التأكد من وجود بيانات صالحة للتصدير
         # ==========================================
@@ -8115,8 +8261,6 @@ class FGSApp(customtkinter.CTk):
         # 3. إعداد البيانات والتنسيقات (Data Prep)
         # ==========================================
         try:
-            import xlsxwriter
-
             # --- ألوان الهوية البصرية ---
             GREEN = "#0B5C3A"
             GOLD = "#B08D2D"
@@ -8465,9 +8609,6 @@ class FGSApp(customtkinter.CTk):
 
     def gl_search(self):
         """البحث الديناميكي للحركات وتعبئة الشيت بترتيب محاسبي دقيق وأداء صاروخي"""
-        import tkinter.messagebox as messagebox
-        import threading
-        import pandas as pd
 
         gl_acc_name = self.combo_gl_acc.get().strip()
         branch_name = self.combo_gl_branch.get().strip()
@@ -8705,12 +8846,6 @@ class FGSApp(customtkinter.CTk):
         threading.Thread(target=search_task, daemon=True).start()
 
     def setup_customer_inquiry_ui(self, parent):
-        import customtkinter as ctk
-        import threading
-        import pandas as pd
-        import re
-        import logging
-
         # =========================================
         # 🚀 1. Background Caching (الفروع فقط)
         # =========================================
@@ -9032,24 +9167,8 @@ class FGSApp(customtkinter.CTk):
 
     def gl_export_pdf(self):
         """تصدير PDF بالتنسيق السليم واعتبار أول حركة هي الرصيد الافتتاحي مع إضافة رصيد 2017"""
-        import tkinter.messagebox as messagebox
-        from tkinter import filedialog
-        from datetime import datetime
-        import re, os
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        from reportlab.lib import colors
-        from reportlab.lib.utils import ImageReader
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
 
         try:
-            import arabic_reshaper
-            from bidi.algorithm import get_display
-
             def ar(txt: str) -> str:
                 txt = "" if txt is None else str(txt)
                 reshaped = arabic_reshaper.reshape(txt)
@@ -9087,7 +9206,6 @@ class FGSApp(customtkinter.CTk):
         CLOSE_BG = colors.HexColor("#FFF5DB")
 
         def resource_path(relative_path):
-            import sys
             try:
                 base_path = sys._MEIPASS
             except Exception:
@@ -9325,10 +9443,8 @@ class FGSApp(customtkinter.CTk):
                 self.sys_logger.log(f"❌ فشل تصدير ملف الأستاذ العام: {e}", "ERROR")
 
     def _premium_dropdown(self, anchor_widget, values, on_select, title="اختر", width=420, height=360):
-        import customtkinter as ctk
 
         values = [str(v) for v in (values or [])]
-
         if getattr(self, "_active_premium_dd", None):
             try:
                 self._active_premium_dd.destroy()
@@ -9418,8 +9534,6 @@ class FGSApp(customtkinter.CTk):
         top.protocol("WM_DELETE_WINDOW", close)
 
     def _create_premium_select(self, parent, values, default, title, width_popup=420, height_popup=360):
-        import customtkinter as ctk
-
         class _PremiumSelectProxy:
             def __init__(self, outer, box, var):
                 self._outer = outer
@@ -9524,9 +9638,6 @@ class FGSApp(customtkinter.CTk):
         # 2. منع الاتصال لو السيرفر فاضي (عشان نلغي رسالة Windows Auth الفاضية)
         if not server or server.strip() == "":
             return None
-
-        # 3. إنشاء الاتصال وتمرير اللوجر
-        from database import DatabaseEngine
         db_instance = DatabaseEngine(
             server=server,
             database=db,
@@ -9556,8 +9667,6 @@ class FGSApp(customtkinter.CTk):
 
     def nuwairy_load_branches(self):
         """تحميل الفروع + ربط كل فرع باسم جدول الحركات بتاعه ديناميكيًا من dbo.TBL_Branches"""
-        from tkinter import messagebox
-        import pandas as pd
 
         try:
             engine = self._get_db_connection()
@@ -9655,7 +9764,6 @@ class FGSApp(customtkinter.CTk):
 
     def _premium_dropdown(self, anchor_widget, values, on_select,
                           title="اختر", width=420, height=420):
-        import customtkinter as ctk
 
         # Theme (same app palette)
         GREEN = globals().get("FIB_GREEN", "#0B5C3A")
@@ -9842,11 +9950,6 @@ class FGSApp(customtkinter.CTk):
         rebuild(values)
 
     def nuwairy_fetch_accounts(self, event=None):
-        from tkinter import messagebox
-        import pandas as pd
-        from sqlalchemy import text
-        import getpass
-        import re
 
         branch_name = self.cmb_branch.get()
         client_no = self.ent_client_no.get().strip()
@@ -10007,9 +10110,6 @@ class FGSApp(customtkinter.CTk):
                 self.sys_logger.log(f"❌ خطأ أثناء الاستعلام عن العميل [{client_no}]: {e}", type="ERROR")
 
     def nuwairy_fetch_transactions(self):
-        from tkinter import messagebox
-        import threading
-
         # ✅ التعديل السابع: منع الضغط المتكرر (Thread Explosion)
         if getattr(self, "_loading", False):
             return
@@ -10049,10 +10149,6 @@ class FGSApp(customtkinter.CTk):
                          daemon=True).start()
 
     def _bg_fetch_transactions_logic(self, client_no, acc_type_name, currency_name):
-        import pandas as pd
-        from sqlalchemy import text
-        from tkinter import messagebox
-
         try:
             engine = self._get_db_connection()
 
@@ -10400,21 +10496,6 @@ class FGSApp(customtkinter.CTk):
         if hasattr(self, 'btn_search'):
             self.after(0, lambda: self.btn_search.configure(text="بحث", state="normal"))
     def nuwairy_export_pdf(self):
-
-        from tkinter import filedialog, messagebox
-        from datetime import datetime
-        import re
-        import os
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        from reportlab.lib import colors
-        from reportlab.lib.utils import ImageReader
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Spacer, Paragraph
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_RIGHT, TA_CENTER, TA_LEFT
-
         lang_choice = messagebox.askyesnocancel("اللغة / Language",
                                                 "اضغط نعم للغة الإنجليزية، لا للغة العربية\nPress Yes for English, No for Arabic")
         if lang_choice is None:
@@ -10517,9 +10598,6 @@ class FGSApp(customtkinter.CTk):
         # 3. دالة معالجة العربي عشان مايطلعش مقلوب
         # ==========================================
         try:
-            import arabic_reshaper
-            from bidi.algorithm import get_display
-
             def ar(txt: str) -> str:
                 txt = "" if txt is None else str(txt)
                 # بنعمل معالجة للعربي حتى لو التقرير إنجليزي عشان الوصف اللي مالوش ترجمة
@@ -10624,7 +10702,6 @@ class FGSApp(customtkinter.CTk):
 
         def make_logo_transparent(input_path, output_path, white_threshold=245):
             try:
-                from PIL import Image
                 im = Image.open(input_path).convert("RGBA")
                 pixels = im.getdata()
                 new_pixels = []
@@ -10666,8 +10743,6 @@ class FGSApp(customtkinter.CTk):
             header_h = 34 * mm
             doc = SimpleDocTemplate(file_path, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm,
                                     topMargin=(header_h + 12 * mm), bottomMargin=14 * mm)
-
-            import tempfile
             logo_png = resource_try("logo.png", "faisal_logo.png")
             logo_jpg = resource_try("logo.jpeg", "logo.jpg", "faisal_logo.jpeg", "faisal_logo.jpg")
 
@@ -10893,11 +10968,6 @@ class FGSApp(customtkinter.CTk):
             messagebox.showerror("خطأ / Error", f"حدث خطأ أثناء تصدير PDF:\n{e}")
             if hasattr(self, 'sys_logger'): self.sys_logger.log(f"❌ فشل تصدير الملف: {e}", type="ERROR")
     def nuwairy_export_excel(self):
-        from tkinter import filedialog, messagebox
-        from datetime import datetime
-        import re
-        import os
-
         rows = getattr(self, "nuwairy_last_rows", None)
         meta = getattr(self, "nuwairy_last_meta", {}) or {}
 
@@ -10955,7 +11025,6 @@ class FGSApp(customtkinter.CTk):
             return None
 
         try:
-            import xlsxwriter
 
             # ---------- Theme ----------
             GREEN = "#0B5C3A"
@@ -11371,13 +11440,6 @@ class FGSApp(customtkinter.CTk):
         else:
             p = filedialog.askdirectory(title="Select Source Folder")
         if p: self.folder_path_var.set(p)
-
-    import json
-    import os
-    import threading
-    from tkinter import messagebox
-    from utils import get_config_path
-
     def load_config_from_json(self):
         config_path = get_config_path("config.json")
 
@@ -11478,7 +11540,6 @@ class FGSApp(customtkinter.CTk):
 
         def _run_test():
             try:
-                from database import DatabaseEngine
                 # استخدام None للوجر لأننا عدلناه ليكون اختيارياً في الخطوات السابقة
                 db = DatabaseEngine(srv, db_n, usr, pwd, logger=None)
 
@@ -11528,12 +11589,10 @@ class FGSApp(customtkinter.CTk):
             radio_choice = self.radio_var.get() if hasattr(self, 'radio_var') else "Excel/CSV"
 
             if radio_choice == "Access":
-                from access_migrator import AccessToSQL
                 self.log_gui(f"🚀 Detected Access Database.")
                 migrator = AccessToSQL(path, srv, db_n, self.log_gui, user=usr, password=pwd)
                 migrator.migrate(mode=write_mode, target_table=target_tbl)
             else:
-                from etl import ETLOrchestrator
                 orch = ETLOrchestrator(srv, db_n, usr, pwd, path, self.log_gui)
                 orch.run()
 
@@ -11556,9 +11615,6 @@ class FGSApp(customtkinter.CTk):
     def load_history_data(self):
         def _bg_load():
             try:
-                from sqlalchemy import text
-                from database import DatabaseEngine
-                from utils import EnterpriseLogger
                 db = DatabaseEngine(self.server_val, self.db_val, EnterpriseLogger(None))
                 with db.engine.connect() as c:
                     rows = c.execute(text(
@@ -11582,10 +11638,6 @@ class FGSApp(customtkinter.CTk):
 
         def _do_export():
             try:
-                from sqlalchemy import text
-                from database import DatabaseEngine
-                from utils import EnterpriseLogger
-
                 # Fetch full data
                 db = DatabaseEngine(self.server_val, self.db_val, EnterpriseLogger(None))
                 query = "SELECT * FROM SYS_FILES_LOG ORDER BY ID DESC"
@@ -11601,7 +11653,6 @@ class FGSApp(customtkinter.CTk):
                         df.to_excel(path, index=False)
                 else:
                     # Fallback if pandas is missing (Basic CSV)
-                    import csv
                     with db.engine.connect() as conn:
                         result = conn.execute(text(query))
                         with open(path, "w", newline="", encoding="utf-8") as f:
@@ -11626,7 +11677,6 @@ class FGSApp(customtkinter.CTk):
         self.is_locked_mode = False
 
         def _monitor_loop():
-            import time
             try:
                 from license_guard import LicenseGuard
             except:
