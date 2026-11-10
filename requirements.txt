@@ -5,3 +5,8 @@ openpyxl
 python-dotenv
 Pillow
 python-bidi
+customtkinter
+tksheet
+reportlab
+XlsxWriter
+arabic-reshaper
