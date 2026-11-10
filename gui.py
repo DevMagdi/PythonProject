@@ -10052,7 +10052,7 @@ class FGSApp(customtkinter.CTk):
                     ebname = str(df2.iloc[0].get("EBname", "") or "")
                     ebadr3 = str(df2.iloc[0].get("EBADRS3", "") or "")
                     ebadr4 = str(df2.iloc[0].get("EBADRS4", "") or "")
-                    ebself.lbl_branch_info.configure(text=f"اسم العميل: {ebname}\nالعنوان: {ebadr3}   {ebadr4}")
+                    self.lbl_branch_info.configure(text=f"اسم العميل: {ebname}\nالعنوان: {ebadr3}   {ebadr4}")
                     #self.lbl_branch_info.configure(text="لا توجد بيانات فرع/عنوان لهذا العميل.")
 
             # مسحنا الـ self.nuwairy_df لأننا مش هنحمل الملايين في الميموري
