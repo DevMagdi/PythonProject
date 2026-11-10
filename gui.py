@@ -373,15 +373,12 @@ class FGSApp(customtkinter.CTk):
                 ("استعلام الحسابات", "nuwairy"),
                 ("أستاذ الحسابات العام", "gl_inquiry"),
             ],
-            "👥 شؤون العملاء": [
+            "👥 خدمة العملاء": [
                 ("بحث عن عميل", "customer"),
                 ("بحث برصيد العميل", "customer_balance"),
                 ("الشهادات الملغاة برقم العميل", "cancelled_certs"),
                 ("الاستفسار عن التوكيلات", "mandates"),
                 ("الاستفسار عن تعليمات عميل", "instructions"),
-                ("الاستفسار عن الكفلاء", "sponsors_inquiry"),
-            ],
-            "📄 الشيكات": [
                 ("الشيكات الموقوفة", "stopped_cheques"),
                 ("الشيكات المرفوضة", "rejected_cheques"),
             ],
@@ -393,10 +390,11 @@ class FGSApp(customtkinter.CTk):
                 ("الاستفسار عن عملاء الجدارة الائتمانية", "creditworthiness"),
                 ("الاستفسار عن إجمالي التزامات عميل", "total_liabilities_inquiry"),
                 ("الاستفسار عن الضمانات لعميل", "customer_collaterals_inquiry"),
+                ("الاستفسار عن الكفلاء", "sponsors_inquiry"),
+                ("الاستفسار عن سابقة تعاملات عميل", "client_history"),
             ],
             "📄 الارباح والمساهمين": [
                 ("الاستفسار الأبجدي عن عملاء مساهمين", "contributing_clients"),
-                ("الاستفسار عن سابقة تعاملات عميل", "client_history"),
             ],
             "العلاج الطبي": [
                 ("الاستفسار الأبجدي عن الموظفين واسرهم", "alphabetical_employees_families"),
