@@ -35,7 +35,6 @@ class StoppedChequesPage(BaseInquiryPage):
     # =========================================================
     def on_search(self):
         acc_num = self.search_entry.get().strip()
-
         if not acc_num:
             messagebox.showwarning("تنبيه", "يرجى إدخال رقم الحساب أولاً")
             self.search_entry.focus()
@@ -44,7 +43,12 @@ class StoppedChequesPage(BaseInquiryPage):
         branch = self.require_branch()
         if branch is None:
             return
-        branch_code, _branch_name = branch
+        branch_code, _ = branch
+
+        table_name = getattr(self.app, "branch_table_mapping", {}).get(str(branch_code).strip())
+        if not table_name:
+            messagebox.showerror("خطأ", f"لا يوجد جدول مربوط بالفرع (BranchCode={branch_code})")
+            return
 
         self.show_loading()
 
@@ -53,17 +57,21 @@ class StoppedChequesPage(BaseInquiryPage):
             if not engine:
                 raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
 
-            # 📌 أداء: لو الاستعلام بطيء، محتاج Index على [dbo].[TBL_cheques] (BCHBR, BCLNT)
             sql = f"""
-                    SELECT
-                        c.BCHNO, c.BDAT, c.BDAT1, c.BCOD,
-                        cl.BNAME
-                    FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
-                    LEFT JOIN [dbo].[TBL_client_name] AS cl WITH (NOLOCK)
-                        ON c.BCLNT = cl.BCLNT
-                    WHERE c.BCHBR = N'{branch_code}' AND c.BCLNT = N'{acc_num}'
-                """
-            return pd.read_sql(sql, engine)
+                SELECT
+                    c.BCHNO, c.BDAT, c.BDAT1, c.BCOD,
+                    cl.BNAME
+                FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
+                OUTER APPLY (
+                    SELECT TOP 1 BNAME
+                    FROM {table_name} WITH (NOLOCK)
+                    WHERE BCLNT = ?
+                      AND BNAME IS NOT NULL
+                      AND LTRIM(RTRIM(BNAME)) <> ''
+                ) AS cl
+                WHERE c.BCLNT = ?
+            """
+            return pd.read_sql(sql, engine, params=(acc_num, acc_num))
 
         self.run_async(work, self._render)
 

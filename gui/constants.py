@@ -50,10 +50,10 @@ except ImportError:
 
 
 def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for Nuitka onefile."""
-    if "__compiled__" in globals():
-        # Nuitka extracts data files to the directory of the executable context
-        base_path = os.path.dirname(__file__)
+    """Get absolute path to resource, works for dev and for Nuitka standalone/onefile."""
+    if getattr(sys, 'frozen', False) or hasattr(sys, '__compiled__') or '__compiled__' in globals():
+        # في حالة Nuitka standalone: الملفات بتكون جنب الـ exe
+        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
     else:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
@@ -66,12 +66,13 @@ my_font_path = resource_path("Amiri-Regular.ttf")
 
 def get_config_path(filename="config.json"):
     """
-    دالة ذكية لتحديد مسار حفظ الإعدادات متوافقة مع Nuitka.
+    دالة ذكية لتحديد مسار حفظ الإعدادات متوافقة مع Nuitka و PyInstaller.
     """
-    if getattr(sys, 'frozen', False) or '__compiled__' in globals():
+    # الطريقة الأكثر أمانًا: استخدم مكان الـ exe دائمًا لو شغال مجمع
+    if getattr(sys, 'frozen', False) or hasattr(sys, '__compiled__') or '__compiled__' in globals():
         application_path = os.path.dirname(os.path.abspath(sys.argv[0]))
     else:
-        # gui/constants.py → parent of the gui package is the application root
+        # وضع التطوير العادي
         application_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     return os.path.join(application_path, filename)

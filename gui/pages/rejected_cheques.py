@@ -46,6 +46,11 @@ class RejectedChequesPage(BaseInquiryPage):
             return
         branch_code, _branch_name = branch
 
+        table_name = getattr(self.app, "branch_table_mapping", {}).get(str(branch_code).strip())
+        if not table_name:
+            messagebox.showerror("خطأ", f"لا يوجد جدول مربوط بالفرع (BranchCode={branch_code})")
+            return
+
         self.show_loading()
 
         def work():
@@ -53,17 +58,22 @@ class RejectedChequesPage(BaseInquiryPage):
             if not engine:
                 raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
 
-            # 📌 أداء: محتاج Index على [dbo].[TBL_cheques] (MBR, MCLNT)
             sql = f"""
-                    SELECT
-                        c.MCHNO, c.MAMT1, c.MDAT1, c.MDAT2, c.MCOD, c.MBAL,
-                        cl.BNAME
-                    FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
-                    LEFT JOIN [dbo].[TBL_client_name] AS cl WITH (NOLOCK)
-                        ON c.MCLNT = cl.BCLNT
-                    WHERE c.MBR = N'{branch_code}' AND c.MCLNT = N'{acc_num}'
-                """
-            return pd.read_sql(sql, engine)
+                SELECT
+                    c.MCHNO, c.MAMT1, c.MDAT1, c.MDAT2, c.MCOD, c.MBAL,
+                    cl.BNAME
+                FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
+                OUTER APPLY (
+                    SELECT TOP 1 BNAME
+                    FROM {table_name} WITH (NOLOCK)
+                    WHERE BCLNT = ?
+                      AND BNAME IS NOT NULL
+                      AND LTRIM(RTRIM(BNAME)) <> ''
+                ) AS cl
+                WHERE c.MCLNT = ?
+                  AND c.MBR = ?
+            """
+            return pd.read_sql(sql, engine, params=(acc_num, acc_num, branch_code))
 
         self.run_async(work, self._render)
 
