@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-شاشة استعلام الشيكات المرفوضة — مبنية على BaseInquiryPage.
-
-نفس SQL ونفس شكل الكروت كما في النسخة القديمة، مع إعادة استخدام
-الهيدر/البحث/fix_arabic_name من الكلاس الأساسي.
-"""
-
 import customtkinter as ctk
 import pandas as pd
 from tkinter import messagebox
@@ -23,19 +16,18 @@ class RejectedChequesPage(BaseInquiryPage):
     SEARCH_LABEL = "رقم الحساب:"
     EMPTY_MESSAGE = "🔍 لا توجد شيكات مرفوضة لهذا الحساب في هذا الفرع"
     LOADING_TEXT = "⚡ جاري البحث في قاعدة البيانات..."
+    PAGE_SIZE = 30
 
     def build(self):
-        # أسماء توافقية مع الكود القديم
         self.ent_rej_acc = self.search_entry
         self.cmb_rej_branch = self.branch_combo
         self.rej_results_scroll = self.results_scroll
+        self._current_df = pd.DataFrame()
+        self._cust_name = "—"
+        self._current_page = 0
 
-    # =========================================================
-    # ⚙️ البحث
-    # =========================================================
     def on_search(self):
         acc_num = self.search_entry.get().strip()
-
         if not acc_num:
             messagebox.showwarning("تنبيه", "يرجى إدخال رقم الحساب أولاً")
             self.search_entry.focus()
@@ -58,41 +50,74 @@ class RejectedChequesPage(BaseInquiryPage):
             if not engine:
                 raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
 
-            sql = f"""
-                SELECT
-                    c.MCHNO, c.MAMT1, c.MDAT1, c.MDAT2, c.MCOD, c.MBAL,
-                    cl.BNAME
-                FROM [dbo].[TBL_cheques] AS c WITH (NOLOCK)
-                OUTER APPLY (
-                    SELECT TOP 1 BNAME
-                    FROM {table_name} WITH (NOLOCK)
-                    WHERE BCLNT = ?
-                      AND BNAME IS NOT NULL
-                      AND LTRIM(RTRIM(BNAME)) <> ''
-                ) AS cl
-                WHERE c.MCLNT = ?
-                  AND c.MBR = ?
+            # 1️⃣ جلب اسم العميل مرة واحدة فقط
+            sql_client = f"""
+                SELECT TOP 1 BNAME
+                FROM {table_name} WITH (NOLOCK)
+                WHERE BCLNT = ? AND BNAME IS NOT NULL AND BNAME <> ''
             """
-            return pd.read_sql(sql, engine, params=(acc_num, acc_num, branch_code))
+            df_client = pd.read_sql(sql_client, engine, params=(acc_num,))
+            cust_name = self.fix_arabic_name(df_client.iloc[0]['BNAME']) if not df_client.empty else "غير مدرج"
 
-        self.run_async(work, self._render)
+            # 2️⃣ استخدام الـ Index الجديد MCLNT_Idx للسرعة القصوى
+            sql_cheques = """
+                SELECT MCHNO, MAMT1, MDAT1, MDAT2, MCOD, MBAL
+                FROM [dbo].[TBL_cheques] WITH (NOLOCK)
+                WHERE MCLNT_Idx = ? AND MBR = ?
+            """
+            df_cheques = pd.read_sql(sql_cheques, engine, params=(str(acc_num), branch_code))
+            return cust_name, df_cheques
 
-    # =========================================================
-    # 🖼️ عرض النتائج (كروت)
-    # =========================================================
-    def _render(self, df):
+        self.run_async(work, self._on_data_loaded)
+
+    def _on_data_loaded(self, result):
+        self._cust_name, self._current_df = result
+        self._current_page = 0
+        self._render_page()
+
+    def _render_page(self):
         self.clear_results()
 
-        if df.empty:
+        if self._current_df.empty:
             self.show_empty()
             return
 
-        for _, row in df.iterrows():
+        total_records = len(self._current_df)
+        total_pages = (total_records + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        start_idx = self._current_page * self.PAGE_SIZE
+        end_idx = min(start_idx + self.PAGE_SIZE, total_records)
+
+        # شريط التنقل بين الصفحات
+        nav_bar = ctk.CTkFrame(self.results_scroll, fg_color=CARD_BG, corner_radius=10, border_width=1, border_color="#CBD5E1")
+        nav_bar.pack(fill="x", padx=10, pady=(0, 10))
+
+        ctk.CTkLabel(
+            nav_bar,
+            text=f"إجمالي الشيكات المرفوضة: {total_records}  |  عرض ({start_idx + 1} - {end_idx})",
+            font=("Arial", 14, "bold"), text_color=FIB_GREEN
+        ).pack(side="right", padx=15, pady=10)
+
+        if total_pages > 1:
+            btns_frame = ctk.CTkFrame(nav_bar, fg_color="transparent")
+            btns_frame.pack(side="left", padx=15, pady=6)
+
+            ctk.CTkButton(btns_frame, text="التالي ◀", width=80, height=30, font=("Arial", 13, "bold"),
+                          fg_color=FIB_GREEN, state="normal" if self._current_page < total_pages - 1 else "disabled",
+                          command=lambda: self._change_page(1)).pack(side="left", padx=4)
+
+            ctk.CTkLabel(btns_frame, text=f"صفحة {self._current_page + 1} من {total_pages}",
+                         font=("Arial", 13, "bold"), text_color=TEXT_DARK).pack(side="left", padx=8)
+
+            ctk.CTkButton(btns_frame, text="▶ السابق", width=80, height=30, font=("Arial", 13, "bold"),
+                          fg_color=FIB_GREEN, state="normal" if self._current_page > 0 else "disabled",
+                          command=lambda: self._change_page(-1)).pack(side="left", padx=4)
+
+        page_df = self._current_df.iloc[start_idx:end_idx]
+
+        for _, row in page_df.iterrows():
             chq_no = str(row['MCHNO']).replace('.0', '') if pd.notna(row['MCHNO']) else "غير معروف"
             reject_code = str(row['MCOD']).replace('.0', '') if pd.notna(row['MCOD']) else "—"
-            cust_name = self.fix_arabic_name(row['BNAME'])
 
-            # تنسيق المبالغ المالية
             try:
                 amount = f"{float(row['MAMT1']):,.2f}" if pd.notna(row['MAMT1']) else "0.00"
                 balance = f"{float(row['MBAL']):,.2f}" if pd.notna(row['MBAL']) else "0.00"
@@ -100,46 +125,42 @@ class RejectedChequesPage(BaseInquiryPage):
                 amount = str(row['MAMT1'])
                 balance = str(row['MBAL'])
 
-            # تنسيق التواريخ
             rej_date = str(row['MDAT1']).split()[0] if pd.notna(row['MDAT1']) else "—"
             due_date = str(row['MDAT2']).split()[0] if pd.notna(row['MDAT2']) else "—"
 
             card = ctk.CTkFrame(self.results_scroll, fg_color=CARD_BG, corner_radius=12,
                                 border_width=1, border_color="#E2E8F0")
-            card.pack(fill="x", padx=10, pady=8)
+            card.pack(fill="x", padx=10, pady=6)
 
-            # الخط الذهبي الجانبي
             ctk.CTkFrame(card, fg_color=FIB_GOLD, width=5, corner_radius=0).pack(side="right", fill="y", pady=10)
 
             card_content = ctk.CTkFrame(card, fg_color="transparent")
-            card_content.pack(fill="both", expand=True, padx=20, pady=15)
+            card_content.pack(fill="both", expand=True, padx=20, pady=12)
 
-            # صف العنوان (رقم الشيك وكود الرفض)
             header_row = ctk.CTkFrame(card_content, fg_color="transparent")
             header_row.pack(fill="x", pady=(0, 5))
 
-            ctk.CTkLabel(header_row, text=f"شيك رقم : {chq_no} 🧾", font=("Segoe UI", 18, "bold"),
+            ctk.CTkLabel(header_row, text=f"شيك رقم : {chq_no} 🧾", font=("Arial", 17, "bold"),
                          text_color=FIB_GREEN).pack(side="right")
-            ctk.CTkLabel(header_row, text=f"كود الرفض: {reject_code} ⛔", font=("Segoe UI", 14, "bold"),
-                         text_color="#EF4444", fg_color="#FEE2E2", corner_radius=6).pack(side="left", ipadx=10,
-                                                                                         ipady=2)
+            ctk.CTkLabel(header_row, text=f"كود الرفض: {reject_code} ⛔", font=("Arial", 13, "bold"),
+                         text_color="#EF4444", fg_color="#FEE2E2", corner_radius=6).pack(side="left", ipadx=10, ipady=2)
 
-            # صف اسم العميل
             name_row = ctk.CTkFrame(card_content, fg_color="transparent")
-            name_row.pack(fill="x", pady=(0, 10))
-            ctk.CTkLabel(name_row, text=f"العميل: {cust_name} 👤", font=("Segoe UI", 15, "bold"),
+            name_row.pack(fill="x", pady=(0, 8))
+            ctk.CTkLabel(name_row, text=f"العميل: {self._cust_name} 👤", font=("Arial", 14, "bold"),
                          text_color=TEXT_MUTED).pack(side="right")
 
-            # خط فاصل
-            ctk.CTkFrame(card_content, fg_color="#F1F5F9", height=2).pack(fill="x", pady=5)
+            ctk.CTkFrame(card_content, fg_color="#F1F5F9", height=2).pack(fill="x", pady=4)
 
-            # صف الداتا (مقسم لـ 4 أجزاء بشكل أنيق)
             data_grid = ctk.CTkFrame(card_content, fg_color="transparent")
-            data_grid.pack(fill="x", pady=10)
+            data_grid.pack(fill="x", pady=6)
             data_grid.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-            # ترتيب العناصر من اليمين لليسار في الجريد
             self.create_info_box(data_grid, 0, 3, "مبلغ الشيك", f"{amount} EGP", val_color=FIB_GREEN)
             self.create_info_box(data_grid, 0, 2, "تاريخ الاستحقاق", due_date)
             self.create_info_box(data_grid, 0, 1, "تاريخ الرفض", rej_date, val_color="#EF4444")
             self.create_info_box(data_grid, 0, 0, "رصيد الحساب", f"{balance} EGP", val_color=TEXT_DARK)
+
+    def _change_page(self, delta):
+        self._current_page += delta
+        self._render_page()
