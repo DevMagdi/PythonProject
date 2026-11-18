@@ -61,11 +61,12 @@ class RejectedChequesPage(BaseInquiryPage):
 
             # 2️⃣ استخدام الـ Index الجديد MCLNT_Idx للسرعة القصوى
             sql_cheques = """
-                SELECT MCHNO, MAMT1, MDAT1, MDAT2, MCOD, MBAL
-                FROM [dbo].[TBL_cheques] WITH (NOLOCK)
-                WHERE MCLNT_Idx = ? AND MBR = ?
-            """
-            df_cheques = pd.read_sql(sql_cheques, engine, params=(str(acc_num), branch_code))
+                          SELECT MCHNO, MAMT1, MDAT1, MDAT2, MCOD, MBAL
+                          FROM [dbo].[TBL_cheques] \
+                          WITH (NOLOCK)
+                          WHERE MCLNT_Idx = ? AND MBR_Idx = ? \
+                          """
+            df_cheques = pd.read_sql(sql_cheques, engine, params=(str(acc_num), str(branch_code)))
             return cust_name, df_cheques
 
         self.run_async(work, self._on_data_loaded)
