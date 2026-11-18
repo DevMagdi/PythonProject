@@ -54,32 +54,39 @@ class MandatesPage(BaseInquiryPage):
             if not engine:
                 raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
 
-            # 1. جلب اسم الجدول الخاص بالفرع
-            # 📌 أداء: محتاج Index على [dbo].[TBL_Branches] (BranchCode)
-            branch_query = f"SELECT GL_TableName, TableName FROM [dbo].[TBL_Branches] WITH (NOLOCK) WHERE BranchCode = N'{branch_code}'"
-            branch_df = pd.read_sql(branch_query, engine)
+            # 1. جلب اسم جدول العميل (TableName فقط بدون GL_TableName)
+            # أو قراءته مباشرة من الكاش لو موجود في app.branch_table_mapping لتوفير استعلام
+            target_table = getattr(self.app, "branch_table_mapping", {}).get(str(branch_code).strip())
 
-            target_table = None
-            if not branch_df.empty:
-                target_table = branch_df.iloc[0].get('GL_TableName') or branch_df.iloc[0].get('TableName')
+            if not target_table:
+                branch_query = "SELECT TOP 1 TableName FROM [dbo].[TBL_Branches] WITH (NOLOCK) WHERE BranchCode = ?"
+                branch_df = pd.read_sql(branch_query, engine, params=(str(branch_code),))
+                if not branch_df.empty:
+                    target_table = branch_df.iloc[0].get('TableName')
 
             fetched_client_name = "غير مسجل"
             if target_table and pd.notna(target_table):
                 target_table = str(target_table).strip()
-                client_query = f"SELECT TOP 1 BNAME FROM [dbo].[{target_table}] WITH (NOLOCK) WHERE BCLNT = N'{cust_no}'"
-                client_df = pd.read_sql(client_query, engine)
+                # تنظيف اسم الجدول لو كان مكتوب معاه [dbo]. مسبقاً
+                clean_table = target_table if "[" in target_table else f"[dbo].[{target_table}]"
+
+                client_query = f"""
+                    SELECT TOP 1 BNAME 
+                    FROM {clean_table} WITH (NOLOCK) 
+                    WHERE BCLNT = ? AND BNAME IS NOT NULL AND BNAME <> ''
+                """
+                client_df = pd.read_sql(client_query, engine, params=(str(cust_no),))
                 if not client_df.empty and pd.notna(client_df.iloc[0].get('BNAME')):
                     fetched_client_name = str(client_df.iloc[0].get('BNAME')).strip()
 
-            # 2. الاستعلام عن التوكيلات
-            # 📌 أداء: محتاج Index على [dbo].[tbl_BAMandates] (SBR, sclnt)
-            sql = f"""
-                SELECT sname, sdatt, stknum, SEE
-                FROM [dbo].[tbl_BAMandates] WITH (NOLOCK)
-                WHERE SBR = N'{branch_code}'
-                  AND sclnt = N'{cust_no}'
-            """
-            df = pd.read_sql(sql, engine)
+            # 2. الاستعلام عن التوكيلات باستخدام Parameters لسرعة الأداء
+            sql = """
+                  SELECT sname, sdatt, stknum, SEE
+                  FROM [dbo].[tbl_BAMandates] \
+                  WITH (NOLOCK)
+                  WHERE SBR = ? AND sclnt = ? \
+                  """
+            df = pd.read_sql(sql, engine, params=(str(branch_code), str(cust_no)))
             return df, fetched_client_name
 
         def on_success(result):
