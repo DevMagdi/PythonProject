@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-شاشة البحث عن عميل (Customer Inquiry).
-
-مُرحّلة حرفياً من gui.py الأصلي — منطق البحث والعرض كما هو دون تغيير.
+شاشة البحث عن عميل (Customer Inquiry) — نسخة فائقة السرعة (Token-Managed + Index-Optimized).
 """
 import logging
 import re
 import threading
-from datetime import datetime
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
@@ -23,12 +19,12 @@ class CustomerInquiryPage(LegacyInquiryPage):
     LOAD_BRANCHES_ON_SHOW = False
 
     def build(self):
-        """بناء الشاشة — الكود القديم كما هو (parent = الشاشة نفسها)."""
         parent = self
         # =========================================
         # 🚀 1. Background Caching (الفروع فقط)
         # =========================================
         self.branches_cache = {}
+        self._search_token = 0  # لإلغاء الاستعلامات القديمة المتداخلة
 
         def preload_branches_metadata():
             try:
@@ -40,7 +36,7 @@ class CustomerInquiryPage(LegacyInquiryPage):
                     name = str(row['BranchName']).strip()
                     self.branches_cache[code] = name
             except Exception as e:
-                print(f"Branch Caching Error: {e}")
+                logging.error(f"Branch Caching Error: {e}")
 
         threading.Thread(target=preload_branches_metadata, daemon=True).start()
 
@@ -79,7 +75,7 @@ class CustomerInquiryPage(LegacyInquiryPage):
         left_col = ctk.CTkFrame(content_frame, fg_color="transparent")
         left_col.pack(side="left", fill="both", expand=True, padx=(0, 20))
 
-        search_title = ctk.CTkLabel(right_col, text="البحث الذكي", font=("Segoe UI", 18, "bold"), text_color=FIB_GREEN)
+        search_title = ctk.CTkLabel(right_col, text="البحث الذكي (الاسم أو الكود)", font=("Segoe UI", 17, "bold"), text_color=FIB_GREEN)
         search_title.pack(anchor="e", padx=25, pady=(20, 10))
 
         self.search_container = ctk.CTkFrame(right_col, fg_color=BOX_BG, corner_radius=10, border_width=1,
@@ -88,6 +84,7 @@ class CustomerInquiryPage(LegacyInquiryPage):
         self.search_container.pack_propagate(False)
 
         def clear_search_bar():
+            self._search_token += 1
             self.ent_cust_search.delete(0, 'end')
             for widget in self.results_scroll.winfo_children():
                 widget.destroy()
@@ -103,7 +100,7 @@ class CustomerInquiryPage(LegacyInquiryPage):
 
         self.ent_cust_search = ctk.CTkEntry(self.search_container, font=("Segoe UI", 15, "bold"), border_width=0,
                                             fg_color=BOX_BG, text_color=TEXT_DARK, justify="right",
-                                            placeholder_text="اكتب اسم العميل...")
+                                            placeholder_text="اكتب 3 أحرف من الاسم أو رقم العميل...")
         self.ent_cust_search.pack(side="right", fill="both", expand=True, padx=(10, 0))
 
         ctk.CTkFrame(right_col, fg_color="#F1F5F9", height=2).pack(fill="x", padx=20, pady=5)
@@ -142,8 +139,8 @@ class CustomerInquiryPage(LegacyInquiryPage):
 
         self.cust_fields = {}
 
-        def create_data_box(parent, row, col, label_text, key, icon):
-            box_outer = ctk.CTkFrame(parent, fg_color="transparent")
+        def create_data_box(parent_grid, row, col, label_text, key, icon):
+            box_outer = ctk.CTkFrame(parent_grid, fg_color="transparent")
             box_outer.grid(row=row, column=col, padx=10, pady=6, sticky="ew")
 
             box = ctk.CTkFrame(box_outer, fg_color=BOX_BG, corner_radius=12, border_width=1, border_color="#E2E8F0",
@@ -195,12 +192,13 @@ class CustomerInquiryPage(LegacyInquiryPage):
         self.cust_fields["FULL_ADDRESS"].pack(anchor="e", pady=(5, 0))
 
         # =========================================
-        # 🧠 5. Search Engine & Modern List (🚀 Optimized)
+        # 🧠 5. Search Engine & Modern List (🚀 Ultra-Fast)
         # =========================================
         self._search_timer = None
 
         def morphological_unglue_arabic(raw_name):
-            if pd.isna(raw_name) or not raw_name: return "—"
+            if pd.isna(raw_name) or not raw_name:
+                return "—"
             text = str(raw_name)
             text = re.sub(r'[^\u0621-\u064A\s]', ' ', text)
             previous_text = ""
@@ -219,60 +217,106 @@ class CustomerInquiryPage(LegacyInquiryPage):
             return text if text else str(raw_name)
 
         def on_search_change(event):
+            if event.keysym in ("Up", "Down", "Left", "Right", "Shift_L", "Shift_R", "Control_L", "Control_R"):
+                return
             if self._search_timer:
                 self.after_cancel(self._search_timer)
-            self._search_timer = self.after(300, execute_search)
+            # مهلة 500 مللي ثانية لمنع إرسال عشرات الاستعلامات أثناء الكتابة السريعة
+            self._search_timer = self.after(500, execute_search)
 
         def execute_search():
             raw_query = self.ent_cust_search.get().strip()
-            if len(raw_query) < 2: return
+            if len(raw_query) < 3 and not raw_query.isdigit():
+                for widget in self.results_scroll.winfo_children():
+                    widget.destroy()
+                if len(raw_query) > 0:
+                    ctk.CTkLabel(
+                        self.results_scroll,
+                        text="✍️ اكتب 3 أحرف على الأقل للبحث...",
+                        font=("Segoe UI", 13, "bold"),
+                        text_color=TEXT_MUTED
+                    ).pack(pady=30)
+                return
 
-            logging.info(f"User Searching for: '{raw_query}'")
-
-            normalized_query = morphological_unglue_arabic(raw_query)
-
-            pattern = re.sub(r'\s+', '%', normalized_query).replace("'", "''")
-            pattern = re.sub(r'[يى]', '[يى]', pattern)
-            pattern = re.sub(r'[اأإآ]', '[اأإآ]', pattern)
-            pattern = re.sub(r'[هة]', '[هة]', pattern)
-            pattern = re.sub(r'[وؤ]', '[وؤ]', pattern)
-            pattern = re.sub(r'[ئ]', '[ئي]', pattern)
+            self._search_token += 1
+            current_token = self._search_token
 
             for widget in self.results_scroll.winfo_children():
                 widget.destroy()
 
-            lbl_loading = ctk.CTkLabel(self.results_scroll, text="⚡ جاري البحث...", font=("Segoe UI", 13, "bold"),
-                                       text_color=FIB_GOLD)
+            lbl_loading = ctk.CTkLabel(
+                self.results_scroll, text="⚡ جاري البحث السريع...",
+                font=("Segoe UI", 13, "bold"), text_color=FIB_GOLD
+            )
             lbl_loading.pack(pady=30)
 
             def fetch_data():
                 try:
                     engine = self._get_db_connection()
 
-                    # نفس الكويري بتاعتك بالظبط بدون أي تعديل
-                    sql = f"""
-                                        SELECT TOP 50 
-                                            orig.BCLNT, orig.BNAME, orig.BSNO1, orig.BDAT2, 
-                                            orig.BBR, orig.BADRS1, orig.BADRS2, orig.BADRS3, orig.BADRS4
-                                        FROM [dbo].[TBL_Search_Names] AS search WITH (NOLOCK)
-                                        INNER JOIN [dbo].[TBL_client_name] AS orig WITH (NOLOCK) 
-                                            ON search.BCLNT = orig.BCLNT
-                                        WHERE search.BNAME_SHRINK LIKE N'%{pattern}%'
-                                    """
-                    df = pd.read_sql(sql, engine)
+                    # 1. إذا كان المدخل أرقاماً فقط -> بحث فوري ومباشر بالـ Index على رقم العميل BCLNT
+                    if raw_query.isdigit():
+                        cust_variants = list({raw_query, raw_query.lstrip('0'), raw_query.zfill(6), raw_query.zfill(7)})
+                        placeholders = ",".join(["?"] * len(cust_variants))
+                        sql = f"""
+                            SELECT TOP 50
+                                BCLNT, BNAME, BSNO1, BDAT2, BBR, BADRS1, BADRS2, BADRS3, BADRS4
+                            FROM [dbo].[TBL_client_name] WITH (NOLOCK)
+                            WHERE BCLNT IN ({placeholders})
+                        """
+                        df = pd.read_sql(sql, engine, params=tuple(cust_variants))
+                    else:
+                        # 2. البحث بالاسم: تجهيز صيغة الكلمات المتباعدة والملتصقة معاً لضمان التطابق 100%
+                        clean_words = re.sub(r'\s+', '%', raw_query.strip())
+                        shrunk_words = re.sub(r'\s+', '', raw_query.strip())
+
+                        # توحيد الهمزات والياء والتاء المربوطة
+                        def normalize_sql_pattern(txt):
+                            txt = re.sub(r'[يى]', '[يى]', txt)
+                            txt = re.sub(r'[اأإآ]', '[اأإآ]', txt)
+                            txt = re.sub(r'[هة]', '[هة]', txt)
+                            txt = re.sub(r'[وؤ]', '[وؤ]', txt)
+                            txt = re.sub(r'[ئ]', '[ئي]', txt)
+                            return txt
+
+                        pat_spaced = normalize_sql_pattern(clean_words)
+                        pat_shrunk = normalize_sql_pattern(shrunk_words)
+
+                        # البحث في جدول البحث وجلب البيانات عبر الـ Index (IX_TBL_client_name_BCLNT)
+                        sql = """
+                            SELECT TOP 50
+                                orig.BCLNT, orig.BNAME, orig.BSNO1, orig.BDAT2,
+                                orig.BBR, orig.BADRS1, orig.BADRS2, orig.BADRS3, orig.BADRS4
+                            FROM [dbo].[TBL_Search_Names] AS search WITH (NOLOCK)
+                            INNER JOIN [dbo].[TBL_client_name] AS orig WITH (NOLOCK)
+                                ON search.BCLNT = orig.BCLNT
+                            WHERE search.BNAME_SHRINK LIKE ?
+                               OR search.BNAME_SHRINK LIKE ?
+                        """
+                        df = pd.read_sql(
+                            sql, engine,
+                            params=(f"{pat_shrunk}%", f"%{pat_spaced}%")
+                        )
+
+                    # تجاهل النتيجة إذا كتب المستخدم حروفاً جديدة أثناء الاستعلام
+                    if current_token != self._search_token:
+                        return
 
                     if not df.empty:
                         df['DISPLAY_NAME'] = df['BNAME'].apply(morphological_unglue_arabic)
 
-                    self.after(0, lambda: update_results_ui(df))
+                    self.after(0, lambda: update_results_ui(df, current_token))
                 except Exception as e:
-                    print(f"DB Search Error: {e}")
                     logging.error(f"Search failed for '{raw_query}': {e}")
-                    self.after(0, lambda: update_results_ui(pd.DataFrame()))
+                    if current_token == self._search_token:
+                        self.after(0, lambda: update_results_ui(pd.DataFrame(), current_token))
 
             threading.Thread(target=fetch_data, daemon=True).start()
 
-        def update_results_ui(df):
+        def update_results_ui(df, token):
+            if token != self._search_token:
+                return
+
             for widget in self.results_scroll.winfo_children():
                 widget.destroy()
 
@@ -287,9 +331,6 @@ class CustomerInquiryPage(LegacyInquiryPage):
                 bclnt = str(row['BCLNT']).replace('.0', '')
                 display_name = row['DISPLAY_NAME']
 
-                # =========================================
-                # التعديل هنا فقط: شكل الليست المسطح والاحترافي
-                # =========================================
                 row_frame = ctk.CTkFrame(self.results_scroll, fg_color="transparent")
                 row_frame.pack(fill="x", pady=0)
 
@@ -308,14 +349,11 @@ class CustomerInquiryPage(LegacyInquiryPage):
                 )
                 list_item.pack(fill="x", expand=True, padx=5, pady=2)
 
-                # خط فاصل رفيع تحت كل اسم
                 ctk.CTkFrame(row_frame, fg_color="#E2E8F0", height=1).pack(fill="x", padx=10, pady=(0, 2))
 
         def load_customer_profile(cust_row):
             raw_name = str(cust_row['BNAME'])
             bclnt_code = str(cust_row['BCLNT']).replace('.0', '') if pd.notna(cust_row['BCLNT']) else "Unknown"
-
-            logging.info(f"User viewed profile for: {raw_name} (Client Code: {bclnt_code})")
 
             self.lbl_cust_name.configure(text=cust_row.get('DISPLAY_NAME', morphological_unglue_arabic(raw_name)))
 
@@ -332,7 +370,7 @@ class CustomerInquiryPage(LegacyInquiryPage):
             else:
                 try:
                     bbr_code = str(int(float(raw_bbr))) if isinstance(raw_bbr, float) else str(raw_bbr).strip()
-                except:
+                except Exception:
                     bbr_code = str(raw_bbr).strip()
                 branch_name = self.branches_cache.get(bbr_code, "غير معرف")
                 self.cust_fields["BBR"].configure(text=f"{branch_name} ({bbr_code})")
@@ -343,3 +381,4 @@ class CustomerInquiryPage(LegacyInquiryPage):
             self.cust_fields["FULL_ADDRESS"].configure(text=morphological_unglue_arabic(full_address))
 
         self.ent_cust_search.bind("<KeyRelease>", on_search_change)
+        self.ent_cust_search.bind("<Return>", lambda e: execute_search())

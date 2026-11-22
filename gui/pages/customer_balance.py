@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-شاشة البحث برصيد العميل (Client Balances).
-
-مُرحّلة حرفياً من gui.py الأصلي — منطق البحث والعرض كما هو دون تغيير.
+شاشة البحث برصيد العميل (Client Balances) — نسخة فائقة السرعة (Index-Optimized + In-Memory Lookups).
 """
 import logging
-import re
 import threading
-from datetime import datetime
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 import customtkinter as ctk
 import pandas as pd
 
@@ -23,11 +19,17 @@ class CustomerBalancePage(LegacyInquiryPage):
     LOAD_BRANCHES_ON_SHOW = False
 
     def build(self):
-        """بناء الشاشة — الكود القديم كما هو (parent = الشاشة نفسها)."""
         parent = self
 
         # =========================================
-        # 🎨 1. الألوان والتنسيق
+        # 🚀 1. كاش محلي للجداول المرجعية (الفروع، العملات، أنواع الحسابات)
+        # =========================================
+        self._branch_info_cache = {}
+        self._acc_types_cache = None
+        self._currencies_cache = None
+
+        # =========================================
+        # 🎨 2. الألوان والتنسيق
         # =========================================
         FIB_GREEN = "#005C34"
         FIB_GOLD = "#C5A059"
@@ -54,7 +56,7 @@ class CustomerBalancePage(LegacyInquiryPage):
         ).pack(side="right", padx=30, pady=15)
 
         # =========================================
-        # 🔍 2. منطقة البحث
+        # 🔍 3. منطقة البحث
         # =========================================
         search_frame = ctk.CTkFrame(main_container, fg_color=CARD_BG, corner_radius=15, border_width=1,
                                     border_color="#E2E8F0")
@@ -92,9 +94,8 @@ class CustomerBalancePage(LegacyInquiryPage):
             )
             self.cmb_bal_branch.pack(side="left", padx=10)
 
-        ctk.CTkLabel(search_inner, text="الفرع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(side="left",
-                                                                                                            padx=(10,
-                                                                                                                  2))
+        ctk.CTkLabel(search_inner, text="الفرع:", font=("Segoe UI", 14, "bold"), text_color=TEXT_DARK).pack(
+            side="left", padx=(10, 2))
 
         def load_branches_to_combo():
             if hasattr(self, 'branch_mapping') and self.branch_mapping:
@@ -110,13 +111,13 @@ class CustomerBalancePage(LegacyInquiryPage):
         self.ent_bal_acc.bind("<Return>", lambda event: execute_search())
 
         # =========================================
-        # 📜 3. منطقة عرض النتائج
+        # 📜 4. منطقة عرض النتائج
         # =========================================
         self.bal_results_scroll = ctk.CTkScrollableFrame(main_container, fg_color="transparent")
         self.bal_results_scroll.pack(fill="both", expand=True, padx=15, pady=(0, 20))
 
         # =========================================
-        # ⚙️ 4. تنفيذ الاستعلام
+        # ⚙️ 5. تنفيذ الاستعلام (فائق السرعة)
         # =========================================
         def execute_search():
             branch_name = self.cmb_bal_branch.get().strip()
@@ -136,7 +137,7 @@ class CustomerBalancePage(LegacyInquiryPage):
 
             lbl_loading = ctk.CTkLabel(
                 self.bal_results_scroll,
-                text="⚡ جاري البحث واستعلام بيانات واسم العميل...",
+                text="⚡ جاري الاستعلام السريع عن أرصدة العميل...",
                 font=("Segoe UI", 16, "bold"), text_color=FIB_GOLD
             )
             lbl_loading.pack(pady=50)
@@ -147,51 +148,75 @@ class CustomerBalancePage(LegacyInquiryPage):
                     if not engine:
                         raise Exception("لم يتم العثور على دالة الاتصال بقاعدة البيانات.")
 
-                    # 1. جلب اسم الجدول وكود الفرع
-                    get_branch_info_sql = f"""
-                        SELECT TOP 1 [BranchCode], [tablename]
-                        FROM [dbo].[TBL_Branches] WITH (NOLOCK)
-                        WHERE [branchName] = N'{branch_name}'
-                    """
+                    # 1. تحميل جداول العملات وأنواع الحسابات مرة واحدة في الذاكرة لتجنب بطء LEFT JOIN
+                    if self._acc_types_cache is None:
+                        try:
+                            acc_df = pd.read_sql("SELECT ccod, CNM FROM [dbo].[TBL_AccTypes] WITH (NOLOCK)", engine)
+                            self._acc_types_cache = {
+                                str(r['ccod']).replace('.0', '').strip(): str(r['CNM']).strip()
+                                for _, r in acc_df.iterrows() if pd.notna(r['ccod'])
+                            }
+                        except Exception:
+                            self._acc_types_cache = {}
 
-                    branch_df = pd.read_sql(get_branch_info_sql, engine)
+                    if self._currencies_cache is None:
+                        try:
+                            cur_df = pd.read_sql("SELECT fcur, cnm FROM [dbo].[tbl_currency] WITH (NOLOCK)", engine)
+                            self._currencies_cache = {
+                                str(r['fcur']).replace('.0', '').strip(): str(r['cnm']).strip()
+                                for _, r in cur_df.iterrows() if pd.notna(r['fcur'])
+                            }
+                        except Exception:
+                            self._currencies_cache = {}
 
-                    if branch_df.empty:
-                        raise Exception(f"لم يتم العثور على الفرع '{branch_name}' في جدول TBL_Branches.")
+                    # 2. جلب معلومات الفرع (من الكاش أولاً)
+                    if branch_name in self._branch_info_cache:
+                        branch_code, target_table = self._branch_info_cache[branch_name]
+                    else:
+                        get_branch_info_sql = """
+                            SELECT TOP 1 [BranchCode], [tablename]
+                            FROM [dbo].[TBL_Branches] WITH (NOLOCK)
+                            WHERE [branchName] = ?
+                        """
+                        branch_df = pd.read_sql(get_branch_info_sql, engine, params=(branch_name,))
+                        if branch_df.empty:
+                            raise Exception(f"لم يتم العثور على الفرع '{branch_name}' في جدول TBL_Branches.")
 
-                    branch_code = str(branch_df.iloc[0]['BranchCode']).strip()
-                    target_table = str(branch_df.iloc[0]['tablename']).strip()
+                        branch_code = str(branch_df.iloc[0]['BranchCode']).strip()
+                        target_table = str(branch_df.iloc[0]['tablename']).strip()
+                        if not target_table:
+                            raise Exception("اسم الجدول (tablename) فارغ لهذا الفرع.")
 
-                    if not target_table:
-                        raise Exception("اسم الجدول (tablename) فارغ لهذا الفرع.")
+                        self._branch_info_cache[branch_name] = (branch_code, target_table)
 
-                    # 2. الكويري المحدث بجدول العملات
+                    clean_tbl = target_table if "[" in target_table else f"[dbo].[{target_table}]"
+
+                    # 3. توليد احتمالات رقم العميل (مع وبدون أصفار) لاستخدام الـ Indexes مباشرة بدون دوال SQL
+                    clean_acc = str(acc_num).strip()
+                    acc_variants = list({clean_acc, clean_acc.lstrip('0'), clean_acc.zfill(6), clean_acc.zfill(7)})
+                    placeholders = ",".join(["?"] * len(acc_variants))
+
+                    # استبدال OR بـ UNION لتفعيل Index الـ BCLNT و Index الـ PCLNT في أجزاء من الثانية
                     sql = f"""
-                        SELECT 
-                            b.PGL,
-                            ISNULL(a.CNM, N'غير معرف') AS AccTypeName,
-                            b.PCLNT,
-                            b.PCUR,
-                            ISNULL(c.cnm, N'غير معرف') AS CurrencyName,
-                            b.PBAL,
-                            b.PAMTM,
-                            b.BNAME 
-                        FROM [dbo].[{target_table}] AS b WITH (NOLOCK)
-                        LEFT JOIN [dbo].[TBL_AccTypes] AS a WITH (NOLOCK)
-                            ON CAST(b.PGL AS NVARCHAR(50)) = CAST(a.ccod AS NVARCHAR(50))
-                        LEFT JOIN [dbo].[tbl_currency] AS c WITH (NOLOCK)
-                            ON CAST(b.PCUR AS NVARCHAR(50)) = CAST(c.fcur AS NVARCHAR(50))
-                        WHERE (
-                            CAST(b.BCLNT AS NVARCHAR(50)) = N'{acc_num}'
-                            OR LTRIM(RTRIM(CAST(b.BCLNT AS NVARCHAR(50)))) = N'{acc_num}'
-                            OR TRY_CAST(b.BCLNT AS BIGINT) = TRY_CAST(N'{acc_num}' AS BIGINT)
-                            OR CAST(b.PCLNT AS NVARCHAR(50)) = N'{acc_num}'
-                            OR LTRIM(RTRIM(CAST(b.PCLNT AS NVARCHAR(50)))) = N'{acc_num}'
-                            OR TRY_CAST(b.PCLNT AS BIGINT) = TRY_CAST(N'{acc_num}' AS BIGINT)
-                        )
+                        SELECT PGL, PCLNT, PCUR, PBAL, PAMTM, BNAME
+                        FROM {clean_tbl} WITH (NOLOCK)
+                        WHERE BCLNT IN ({placeholders})
+                        UNION
+                        SELECT PGL, PCLNT, PCUR, PBAL, PAMTM, BNAME
+                        FROM {clean_tbl} WITH (NOLOCK)
+                        WHERE PCLNT IN ({placeholders})
                     """
+                    df = pd.read_sql(sql, engine, params=tuple(acc_variants + acc_variants))
 
-                    df = pd.read_sql(sql, engine)
+                    # ربط أسماء الحسابات والعملات من الذاكرة فوراً
+                    if not df.empty:
+                        df['AccTypeName'] = df['PGL'].apply(
+                            lambda x: self._acc_types_cache.get(str(x).replace('.0', '').strip(), 'غير معرف') if pd.notna(x) else 'غير معرف'
+                        )
+                        df['CurrencyName'] = df['PCUR'].apply(
+                            lambda x: self._currencies_cache.get(str(x).replace('.0', '').strip(), 'غير معرف') if pd.notna(x) else 'غير معرف'
+                        )
+
                     self.after(0, lambda: update_results_ui(df, target_table, branch_code))
 
                 except Exception as e:
@@ -238,9 +263,7 @@ class CustomerBalancePage(LegacyInquiryPage):
                 font=("Segoe UI", 18, "bold"), text_color="white"
             ).pack(pady=15)
 
-            # حاوية الكروت لتجهيزها قبل العرض عشان نعد اللي هيظهر بس
             valid_cards = []
-
             for _, row in df.iterrows():
                 pgl_code = str(row['PGL']).replace('.0', '') if pd.notna(row['PGL']) else "—"
                 acc_type_name = str(row['AccTypeName']).strip()
@@ -248,16 +271,14 @@ class CustomerBalancePage(LegacyInquiryPage):
                 pcur_val = str(row['PCUR']).replace('.0', '') if pd.notna(row['PCUR']) else "—"
                 curr_name = str(row['CurrencyName']).strip()
 
-                # 🛑 الفلترة: تخطي السجل إذا كان ملوش عملة (أو غير معرفة) ولا ليه نوع حساب
                 is_invalid_type = (acc_type_name == "غير معرف" or pgl_code in ["—", "0", "nan"])
                 is_invalid_currency = (curr_name == "غير معرف" or pcur_val in ["—", "0", "nan"])
 
                 if is_invalid_type and is_invalid_currency:
-                    continue  # تجاهل الريكورد تماماً
+                    continue
 
                 valid_cards.append(row)
 
-            # شريط الملخص بالعدد الفعلي بعد الفلترة
             summary_bar = ctk.CTkFrame(self.bal_results_scroll, fg_color=CARD_BG, corner_radius=10)
             summary_bar.pack(fill="x", padx=10, pady=(0, 10))
 
@@ -288,14 +309,14 @@ class CustomerBalancePage(LegacyInquiryPage):
                 if 'PBAL' in row and pd.notna(row['PBAL']):
                     try:
                         balance_val = f"{float(row['PBAL']):,.2f}"
-                    except:
+                    except Exception:
                         balance_val = str(row['PBAL'])
 
                 amtm_val = "0.00"
                 if 'PAMTM' in row and pd.notna(row['PAMTM']):
                     try:
                         amtm_val = f"{float(row['PAMTM']):,.2f}"
-                    except:
+                    except Exception:
                         amtm_val = str(row['PAMTM'])
 
                 card = ctk.CTkFrame(self.bal_results_scroll, fg_color=CARD_BG, corner_radius=12, border_width=1,
@@ -328,8 +349,8 @@ class CustomerBalancePage(LegacyInquiryPage):
                 data_grid.pack(fill="x")
                 data_grid.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-                def create_info_box(parent, col_idx, title, value, val_color=TEXT_DARK):
-                    box = ctk.CTkFrame(parent, fg_color=BOX_BG, corner_radius=8)
+                def create_info_box(parent_grid, col_idx, title, value, val_color=TEXT_DARK):
+                    box = ctk.CTkFrame(parent_grid, fg_color=BOX_BG, corner_radius=8)
                     box.grid(row=0, column=col_idx, padx=4, pady=5, sticky="ew")
                     ctk.CTkLabel(box, text=title, font=("Segoe UI", 11, "bold"), text_color=TEXT_MUTED).pack(
                         anchor="center", pady=(5, 0))
